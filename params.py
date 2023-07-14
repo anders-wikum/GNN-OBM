@@ -1,3 +1,7 @@
+import numpy as np
+
+_Array = np.ndarray
+
 SAMPLER_SPECS = {
     'GEOM': set(['threshold', 'scaling']),
     'ER': set(['p', 'weighted']),

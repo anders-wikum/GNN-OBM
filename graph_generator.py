@@ -1,8 +1,6 @@
-from params import SAMPLER_SPECS, GRAPH_TYPES
+from params import SAMPLER_SPECS, GRAPH_TYPES, _Array
 import numpy as np
 import networkx as nx
-
-_Array = np.ndarray
 
 
 def _add_uniform_weights(adj, low, high):
