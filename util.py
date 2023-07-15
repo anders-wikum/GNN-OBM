@@ -1,4 +1,5 @@
 from itertools import chain, combinations
+import numpy as np
 
 
 def powerset(iterable):
@@ -10,3 +11,17 @@ def powerset(iterable):
 
 def diff(S: frozenset, u: int) -> frozenset:
     return S.difference(set([u]))
+
+
+def _random_subset(seq, m):
+    """Return m unique elements from seq.
+
+    This differs from random.sample which can return repeated
+    elements if seq holds repeated elements.
+    """
+    targets = set()
+    while len(targets) < m:
+        x = np.random.choice(seq)
+        targets.add(x)
+
+    return targets

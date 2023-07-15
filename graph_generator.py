@@ -1,4 +1,5 @@
 from params import SAMPLER_SPECS, GRAPH_TYPES, _Array
+from util import _random_subset
 import numpy as np
 import networkx as nx
 
@@ -25,19 +26,82 @@ def _sample_er_bipartite_graph(m: int, n: int, **kwargs):
     return mat
 
 
-# TODO: Fix this implementation
+def _add_edges_to_graph(
+    G,
+    source: list,
+    targets: list,
+    ba_param: int,
+    source_repeated_nodes: list,
+    target_repeated_nodes: list,
+) -> None:
+
+    G.add_edges_from(zip([source] * ba_param, targets))
+    target_repeated_nodes.extend(targets)
+    source_repeated_nodes.extend([source] * ba_param)
+
+
+def _barabasi_albert_graph(m: int, n: int, ba_param: int) -> _Array:
+    # Add m initial nodes (m0 in barabasi-speak)
+    G = nx.empty_graph(2 * ba_param)
+    G.name = "barabasi_albert_graph(%s, %s, %s)" % (m, n, ba_param)
+
+    # List of existing nodes, with nodes repeated once for each adjacent edge
+    LHS_repeated_nodes = list(range(0, ba_param))
+    RHS_repeated_nodes = list(range(m, m + ba_param))
+
+    # Start adding the other n-m nodes. The first node is m.
+    LHS_source = 0
+    RHS_source = m
+
+    alternate = True
+    next_node = 'LHS'
+
+    while LHS_source < m or RHS_source < m + n:
+        if RHS_source == n + m:
+            next_node = 'LHS'
+            alternate = False
+        if LHS_source == m:
+            next_node = 'RHS'
+            alternate = False
+
+        if next_node == 'LHS':
+            RHS_targets = _random_subset(RHS_repeated_nodes, ba_param)
+            _add_edges_to_graph(G, LHS_source, RHS_targets,
+                                ba_param, LHS_repeated_nodes, RHS_repeated_nodes)
+            LHS_source += 1
+            if alternate:
+                next_node = 'RHS'
+
+        else:
+            LHS_targets = _random_subset(LHS_repeated_nodes, ba_param)
+            _add_edges_to_graph(G, RHS_source, LHS_targets,
+                                ba_param, RHS_repeated_nodes, LHS_repeated_nodes)
+            G.add_edges_from(zip([RHS_source] * ba_param, LHS_targets))
+            RHS_source += 1
+            if alternate:
+                next_node = 'LHS'
+
+    return G
+
+
 def _sample_ba_bipartite_graph(m: int, n: int, **kwargs):
-    weighted = kwargs.get('weighted', False)
     low = kwargs.get('low', 0.0),
     high = kwargs.get('high', 1.0)
-    ba_param = kwargs.get('ba_param', 5)
+    weighted = kwargs['weighted']
+    ba_param = kwargs['ba_param']
 
-    ba_graph = nx.barabasi_albert_graph(n + m, ba_param)
-    mat = nx.to_numpy_array(ba_graph)[:n, n:]
+    ba_graph = _barabasi_albert_graph(m, n, ba_param)
+    A = np.zeros((m, n))
+    for (u, v) in ba_graph.edges():
+        if u > v:
+            A[v, u - m] = 1
+        else:
+            A[u, v - m] = 1
+
     if weighted:
-        mat = _add_uniform_weights(mat, low, high)
+        A = _add_uniform_weights(A, low, high)
 
-    return mat
+    return A
 
 
 def _sample_geom_bipartite_graph(m: int, n: int, **kwargs):
