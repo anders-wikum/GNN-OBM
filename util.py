@@ -25,3 +25,11 @@ def _random_subset(seq, m):
         targets.add(x)
 
     return targets
+
+
+def _symmetrize(adj):
+    n, m = adj.shape
+    A = np.zeros((n + m, n + m))
+    A[:n, n:] = adj
+    A[n:, :n] = adj.T
+    return A
