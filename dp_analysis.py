@@ -2,7 +2,7 @@ import traceback
 import numpy as np
 from scipy.special import rel_entr
 from params import _Array
-from util import diff
+from util import diff, _neighbors
 
 
 def entropy(p):
@@ -19,11 +19,16 @@ def uniform_entropy(size):
 
 def hints_of_node(S: frozenset, t: int, cache: dict, A: _Array):
     try:
-        p = [
-            cache[t + 1][frozenset(diff(set(S), u))][0] + A[t, u]
-            for u in S
-        ]
-        p.append(cache[t + 1][S][0])
+        N_t = _neighbors(A, S, t)
+        p = np.array([
+            *[
+                cache[t + 1][diff(S, u)][0] + A[t, u]
+                if u in N_t
+                else -1
+                for u in S
+            ],
+            cache[t + 1][S][0]
+        ])
         p = np.array(p)
 
         if np.all(p == 0):
@@ -37,8 +42,11 @@ def hints_of_node(S: frozenset, t: int, cache: dict, A: _Array):
 
 def rel_entropy_of_node(S: frozenset, t: int, cache: dict, A: _Array):
     p = hints_of_node(S, t, cache, A)
+    p = p[p >= 0]
+    if sum(p) == 0:
+        return 0
     p = p / sum(p)
-    num_choices = len(S) + 1
+    num_choices = len(p)
     uniform_dist = [1 / num_choices for _ in range(num_choices)]
     return sum(rel_entr(p, uniform_dist))
 
