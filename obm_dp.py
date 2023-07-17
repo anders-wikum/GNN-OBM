@@ -1,5 +1,5 @@
 from params import _Array
-from util import powerset, diff
+from util import powerset, diff, _neighbors
 import numpy as np
 
 
@@ -10,10 +10,11 @@ def cache_stochastic_opt(A: _Array, p: _Array) -> dict:
     online arrival probabilities [p] and underlying graph
     adjacency matrix [A].
     '''
+
     def _neighbor_max_argmax(S: frozenset, t: int):
         argmax = -1
         max_val = cache[t + 1][S][0]
-        for u in S:
+        for u in _neighbors(A, S, t):
             val = cache[t + 1][diff(S, u)][0] + A[t, u]
             if val > max_val:
                 argmax = u
@@ -30,7 +31,7 @@ def cache_stochastic_opt(A: _Array, p: _Array) -> dict:
         if S not in cache[t + 1]:
             cache[t + 1][S] = _value_to_go(S, t + 1)
 
-        for u in S:
+        for u in _neighbors(A, S, t):
             S_diff_u = diff(S, u)
             if S_diff_u not in cache[t + 1]:
                 cache[t + 1][S_diff_u] = _value_to_go(S_diff_u, t + 1)
@@ -67,13 +68,19 @@ def one_step_stochastic_opt(
     associated with each offline node matching to online node [t]. Nodes which
     are not active in [offline_nodes] have a value-to-go of 0.'''
 
-    n = A.shape[1]
-    hint = np.zeros(n + 1)
-    hint[-1] = cache[t + 1][offline_nodes][0]
-    for u in offline_nodes:
-        hint[u] = cache[t + 1][diff(offline_nodes, u)][0] + A[t, u]
+    N_t = _neighbors(A, offline_nodes, t)
+    hint = np.array([
+        *[
+            cache[t + 1][diff(offline_nodes, u)][0] + A[t, u]
+            if u in N_t
+            else -1
+            for u in offline_nodes
+        ],
+        cache[t + 1][offline_nodes][0]
+    ])
 
-    return hint
+    neighbor_mask = [*[u in N_t for u in offline_nodes], True]
+    return hint[neighbor_mask], neighbor_mask
 
 
 def stochastic_opt(
@@ -89,8 +96,7 @@ def stochastic_opt(
 
     for t in range(m):
         if coin_flips[t]:
-            hint = one_step_stochastic_opt(A, offline_nodes, t, cache)
-            choice = np.argmax(hint)
+            choice = cache[t][offline_nodes][1]
             if choice in offline_nodes:
                 matching.append((t, choice))
                 offline_nodes = diff(offline_nodes, choice)
