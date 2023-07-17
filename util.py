@@ -1,5 +1,6 @@
 from itertools import chain, combinations
 import numpy as np
+from params import _Array
 
 
 def powerset(iterable):
@@ -33,3 +34,27 @@ def _symmetrize(adj):
     A[:n, n:] = adj
     A[n:, :n] = adj.T
     return A
+
+
+def _extract_edges(A: _Array):
+    m, n = A.shape
+    edge_index = []
+    edge_attr = []
+
+    # Edges/edge weights in underlying graph
+    for i in range(m):
+        for j in range(n):
+            if A[i, j] > 0:
+                edge_index.append([i, j])
+                edge_attr.append([A[i, j]])
+
+    # Virtual node representing no match
+    for j in range(n):
+        edge_index.append([n + m, j])
+        edge_attr.append([0])
+
+    return edge_index, edge_attr
+
+
+def _neighbors(A: _Array, S: set, t: int) -> _Array:
+    return [u for u in S if A[t, u] > 0]

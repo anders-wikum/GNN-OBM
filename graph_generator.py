@@ -1,7 +1,10 @@
 from params import SAMPLER_SPECS, GRAPH_TYPES, _Array
-from util import _random_subset
+from obm_dp import one_step_stochastic_opt
+from util import _random_subset, _extract_edges
 import numpy as np
 import networkx as nx
+import torch
+from torch_geometric.data import Data
 
 
 def _add_uniform_weights(adj, low, high):
@@ -184,3 +187,66 @@ def sample_bipartite_graph(m: int, n: int, **kwargs) -> _Array:
         )
 
     return SAMPLER_ROUTER[graph_type](m, n, **kwargs)
+
+
+def _gen_mask(size: tuple, slice: object) -> _Array:
+    mask = torch.zeros(size)
+    mask[slice] = 1
+    return mask
+
+
+def _positional_encoder(size: int):
+    return torch.tensor(np.random.uniform(0, 1, size))
+
+
+def _arrival_encoder(p: _Array, size: int):
+    fill_size = size - len(p) - 1
+    return torch.tensor([*([0] * fill_size), 1, *p[1:], 0])
+
+
+def _neighbor_encoder(neighbor_mask: _Array, size: int):
+    fill_size = size - len(neighbor_mask)
+    return torch.tensor([*neighbor_mask[:-1], *([False] * fill_size), True])
+
+
+def _to_pyg(
+    A: _Array,
+    p: _Array,
+    hint: _Array,
+    neighbor_mask: _Array
+):
+    '''
+    Generates a data sample. [A] is the adjacency matrix consisting of
+    unmatched offline nodes and online nodes which have not already been
+    seen. For each of these online nodes, [p] gives the node's arrival
+    probability (first entry is always 1 and corresponds to arriving
+    online node.
+
+    '''
+    m, n = A.shape
+    edge_index, edge_attr = _extract_edges(A)
+
+    offline_mask = _gen_mask(n + m + 1, slice(0, n, 1))
+    arrival_mask = _gen_mask(n + m + 1, n)
+    pos_encoder = _positional_encoder(n + m + 1)
+    arrival_probs = _arrival_encoder(p, n + m + 1)
+    neighbor_mask = _neighbor_encoder(neighbor_mask, n + m + 1)
+
+    x = torch.stack(
+        [
+            pos_encoder,
+            arrival_probs,
+            offline_mask,
+            arrival_mask
+        ]).T.type(torch.FloatTensor)
+    edge_index = torch.tensor(edge_index).T
+    edge_attr = torch.tensor(edge_attr).type(torch.FloatTensor)
+    hint = torch.tensor(hint).type(torch.FloatTensor)
+
+    return Data(
+        x=x,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        neighbors=neighbor_mask,
+        hint=hint
+    )
