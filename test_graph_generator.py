@@ -32,6 +32,6 @@ TEST_CONFIGS = [
     [(config, True) for config in TEST_CONFIGS]
 )
 def test_bipartite(test_input, expected):
-    A = sample_bipartite_graph(5, 4, **test_input)
+    A = sample_bipartite_graph(100, 100, **test_input)
     G = nx.from_numpy_array(_symmetrize(A))
     assert nx.is_bipartite(G) == expected
