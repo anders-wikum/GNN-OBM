@@ -1,6 +1,6 @@
 from params import SAMPLER_SPECS, GRAPH_TYPES, _Array
-from obm_dp import one_step_stochastic_opt
-from util import _random_subset, _extract_edges
+from obm_dp import one_step_stochastic_opt, cache_stochastic_opt
+from util import _random_subset, _extract_edges, diff
 import numpy as np
 import networkx as nx
 import torch
@@ -250,3 +250,49 @@ def _to_pyg(
         neighbors=neighbor_mask,
         hint=hint
     )
+
+
+def _update(dict, u):
+    del dict[u]
+    for (key, val) in dict.items():
+        if val > u:
+            dict[key] -= 1
+
+
+def _generate_example(A: _Array, p: _Array, cache: dict):
+    graphs = []
+
+    p = list(np.copy(p))
+    m, n = A.shape
+    offline_nodes = frozenset(np.arange(n))
+    reduced_nodes = frozenset(np.arange(n))
+    reduced_of_node = dict(zip(range(n), range(n)))
+    reduced_A = np.copy(A)
+
+    for t in range(m):
+        hint, neighbor_mask = one_step_stochastic_opt(
+            A, offline_nodes, t, cache)
+        graphs.append(_to_pyg(reduced_A, p, hint, neighbor_mask))
+        choice = cache[t][offline_nodes][1]
+
+        offline_nodes = diff(offline_nodes, choice)
+
+        if choice != -1:
+            reduced_nodes = diff(reduced_nodes, reduced_of_node[choice])
+            _update(reduced_of_node, choice)
+
+        reduced_A = reduced_A[1:, :]
+        reduced_A = np.take(reduced_A, list(reduced_nodes), axis=1)
+        reduced_nodes = frozenset(np.arange(len(reduced_nodes)))
+        p.pop()
+
+    return graphs
+
+
+def generate_examples(num: int, m: int, n: int, p: _Array, **kwargs):
+    dataset = []
+    for _ in range(num):
+        A = sample_bipartite_graph(m, n, **kwargs)
+        cache = cache_stochastic_opt(A, p)
+        dataset.extend(_generate_example(A, p, cache))
+    return dataset
