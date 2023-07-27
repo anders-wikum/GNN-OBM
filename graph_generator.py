@@ -285,8 +285,9 @@ def _to_pyg(
     neighbor_mask = _neighbor_encoder(A, offline_nodes, t)
     arrival_probs = _arrival_encoder(p, t, n + m + 1)
 
-    t = torch.tensor([t] * (n + m + 1)),
     ratio = torch.tensor([len(offline_nodes) / (m - t)] * (n + m + 1))
+    t = torch.tensor([t] * (n + m + 1))
+
     graph_features = torch.stack(
         [
             t,
