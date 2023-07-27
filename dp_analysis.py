@@ -53,9 +53,14 @@ def rel_entropy_of_node(S: frozenset, t: int, cache: dict, A: _Array):
 
 def greedy_suboptimality_of_node(S: frozenset, t: int, cache: dict, A: _Array):
     n = A.shape[1]
+    N_t = _neighbors(A, S, t)
     values_to_go = hints_of_node(S, t, cache, A)
-    edge_weights = np.array([A[t, u] for u in S])
+    values_to_go = values_to_go[values_to_go >= 0]
+    edge_weights = np.array([A[t, u] for u in N_t])
     opt_vtg = np.max(values_to_go)
+    if len(edge_weights) == 0:
+        return 0
+
     greedy_decision = np.argmax(edge_weights)
     return (opt_vtg - values_to_go[greedy_decision]) / \
         cache[0][frozenset(np.arange(n))][0]
@@ -64,6 +69,7 @@ def greedy_suboptimality_of_node(S: frozenset, t: int, cache: dict, A: _Array):
 def uniform_suboptimality_of_node(S: frozenset, t: int, cache: dict, A: _Array):
     n = A.shape[1]
     values_to_go = hints_of_node(S, t, cache, A)
+    values_to_go = values_to_go[values_to_go >= 0]
     opt_vtg = np.max(values_to_go)
     uniform_decision = np.random.choice(np.arange(len(values_to_go)))
     return (opt_vtg - values_to_go[uniform_decision]) / \
@@ -71,11 +77,31 @@ def uniform_suboptimality_of_node(S: frozenset, t: int, cache: dict, A: _Array):
 
 
 def greedy_correctness_of_node(S: frozenset, t: int, cache: dict, A: _Array):
+    N_t = _neighbors(A, S, t)
     values_to_go = hints_of_node(S, t, cache, A)
-    edge_weights = np.array([A[t, u] for u in S])
+    values_to_go = values_to_go[values_to_go >= 0]
+    edge_weights = np.array([A[t, u] for u in N_t])
+
+    if len(edge_weights) == 0:
+        return 1
+
     opt_decision = np.argmax(values_to_go)
     greedy_decision = np.argmax(edge_weights)
     return 1 * (greedy_decision == opt_decision)
+
+
+def uniform_correctness_of_node(S: frozenset, t: int, cache: dict, A: _Array):
+    values_to_go = hints_of_node(S, t, cache, A)
+    values_to_go = values_to_go[values_to_go >= 0]
+    opt_decision = np.argmax(values_to_go)
+    uniform_decision = np.random.choice(np.arange(len(values_to_go)))
+    return 1 * (uniform_decision == opt_decision)
+
+
+def range_of_node(S: frozenset, t: int, cache: dict, A: _Array):
+    values_to_go = hints_of_node(S, t, cache, A)
+    values_to_go = values_to_go[values_to_go >= 0]
+    return np.max(values_to_go) - np.min(values_to_go)
 
 
 def quantity_of_cache_layer(cache: dict, t: int, node_func: callable, A: _Array):
@@ -85,7 +111,7 @@ def quantity_of_cache_layer(cache: dict, t: int, node_func: callable, A: _Array)
 def expected_quantities(cache: dict, node_func: callable, A: _Array):
     layers = list(cache.keys())[:-1]
     return layers, [
-        np.nanmean(quantity_of_cache_layer(cache, t, node_func, A)[1:])
+        np.nanmean(quantity_of_cache_layer(cache, t, node_func, A))
         for t in layers
     ]
 
@@ -94,5 +120,7 @@ NODE_FUNCS = {
     'relative_entropy': rel_entropy_of_node,
     'greedy_suboptimality': greedy_suboptimality_of_node,
     'greedy_correctness': greedy_correctness_of_node,
-    'uniform_suboptimality': uniform_suboptimality_of_node
+    'uniform_suboptimality': uniform_suboptimality_of_node,
+    'uniform_correctness': uniform_correctness_of_node,
+    'range': range_of_node
 }

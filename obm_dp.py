@@ -1,5 +1,6 @@
 from params import _Array
 from util import powerset, diff, _neighbors
+from scipy.optimize import linear_sum_assignment
 import numpy as np
 
 
@@ -72,15 +73,12 @@ def one_step_stochastic_opt(
     hint = np.array([
         *[
             cache[t + 1][diff(offline_nodes, u)][0] + A[t, u]
-            if u in N_t
-            else -1
-            for u in offline_nodes
+            for u in N_t
         ],
         cache[t + 1][offline_nodes][0]
     ])
 
-    neighbor_mask = [*[u in N_t for u in offline_nodes], True]
-    return hint[neighbor_mask], neighbor_mask
+    return hint
 
 
 def stochastic_opt(
@@ -126,4 +124,17 @@ def greedy(
                 offline_nodes = diff(offline_nodes, choice)
                 value += A[t, choice]
 
+    return matching, value
+
+
+def offline_opt(A: _Array, coin_flips: _Array):
+    A = np.copy(A)
+    m = A.shape[0]
+    for t in range(m):
+        if not coin_flips[t]:
+            A[t, :] = 0
+
+    row_ind, col_ind = linear_sum_assignment(A, maximize=True)
+    value = A[row_ind, col_ind].sum()
+    matching = [(row_ind[i], col_ind[i]) for i in range(len(row_ind))]
     return matching, value
