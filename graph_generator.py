@@ -1,6 +1,6 @@
 from params import SAMPLER_SPECS, GRAPH_TYPES, _Array
 from obm_dp import one_step_stochastic_opt, cache_stochastic_opt
-from util import _random_subset, _extract_edges, diff
+from util import _random_subset, _extract_edges, diff, _neighbors
 import numpy as np
 import networkx as nx
 import torch
@@ -199,21 +199,64 @@ def _positional_encoder(size: int):
     return torch.tensor(np.random.uniform(0, 1, size))
 
 
-def _arrival_encoder(p: _Array, size: int):
+def _arrival_encoder(p: _Array, t: int, size: int):
+    p = np.copy(p)
+    p[t] = 1
     fill_size = size - len(p) - 1
-    return torch.tensor([*([0] * fill_size), 1, *p[1:], 0])
+    return torch.tensor([*([0] * fill_size), *p, 0])
 
 
-def _neighbor_encoder(neighbor_mask: _Array, size: int):
-    fill_size = size - len(neighbor_mask)
-    return torch.tensor([*neighbor_mask[:-1], *([False] * fill_size), True])
+def _to_pyg_train(
+    A: _Array,
+    p: _Array,
+    offline_nodes: frozenset,
+    t: int,
+    hint: _Array
+):
+    x, edge_index, edge_attr, neighbor_mask, graph_features = _to_pyg(
+        A, p, offline_nodes, t)
+
+    hint = torch.tensor(hint).type(torch.FloatTensor)
+
+    return Data(
+        x=x,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        neighbors=neighbor_mask,
+        hint=hint,
+        graph_features=graph_features
+    )
+
+
+def _to_pyg_test(
+    A: _Array,
+    p: _Array,
+    offline_nodes: frozenset,
+    t: int
+
+):
+    x, edge_index, edge_attr, neighbor_mask, graph_features = _to_pyg(
+        A, p, offline_nodes, t)
+    return Data(
+        x=x,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        neighbors=neighbor_mask,
+        graph_features=graph_features
+    )
+
+
+def _neighbor_encoder(A, offline_nodes, t):
+    m, n = A.shape
+    N_t = _neighbors(A, offline_nodes, t)
+    return torch.tensor([*[u in N_t for u in np.arange(n + m)], True])
 
 
 def _to_pyg(
     A: _Array,
     p: _Array,
-    hint: _Array,
-    neighbor_mask: _Array
+    offline_nodes: frozenset,
+    t: int
 ):
     '''
     Generates a data sample. [A] is the adjacency matrix consisting of
@@ -224,75 +267,77 @@ def _to_pyg(
 
     '''
     m, n = A.shape
-    edge_index, edge_attr = _extract_edges(A)
+    edge_index, edge_attr = _extract_edges(A, offline_nodes, t)
+    # edge_probs = []
+    # for [u, v] in edge_index:
+    #     if u == m + n or v == m + n:
+    #         edge_probs.append([0])
+    #     elif u == n + t or v == n + t:
+    #         edge_probs.append([1])
+    #     elif u >= n and u < n + m:
+    #         edge_probs.append([p[u - n]])
+    #     elif v >= n and v < n + m:
+    #         edge_probs.append([p[v - n]])
 
     offline_mask = _gen_mask(n + m + 1, slice(0, n, 1))
-    arrival_mask = _gen_mask(n + m + 1, n)
+    arrival_mask = _gen_mask(n + m + 1, n + t)
     pos_encoder = _positional_encoder(n + m + 1)
-    arrival_probs = _arrival_encoder(p, n + m + 1)
-    neighbor_mask = _neighbor_encoder(neighbor_mask, n + m + 1)
+    neighbor_mask = _neighbor_encoder(A, offline_nodes, t)
+    arrival_probs = _arrival_encoder(p, t, n + m + 1)
+
+    t = torch.tensor([t] * (n + m + 1)),
+    ratio = torch.tensor([len(offline_nodes) / (m - t)] * (n + m + 1))
+    graph_features = torch.stack(
+        [
+            t,
+            ratio,
+        ]).type(torch.FloatTensor)
 
     x = torch.stack(
         [
             pos_encoder,
-            arrival_probs,
             offline_mask,
+            arrival_probs,
             arrival_mask
         ]).T.type(torch.FloatTensor)
     edge_index = torch.tensor(edge_index).T
     edge_attr = torch.tensor(edge_attr).type(torch.FloatTensor)
-    hint = torch.tensor(hint).type(torch.FloatTensor)
+    # edge_attr = torch.stack(
+    #     [
+    #         torch.tensor(edge_attr),
+    #         torch.tensor(edge_probs)
+    #     ]).T.type(torch.FloatTensor).squeeze()
 
-    return Data(
-        x=x,
-        edge_index=edge_index,
-        edge_attr=edge_attr,
-        neighbors=neighbor_mask,
-        hint=hint
-    )
+    return x, edge_index, edge_attr, neighbor_mask, graph_features
 
 
-def _update(dict, u):
-    del dict[u]
-    for (key, val) in dict.items():
-        if val > u:
-            dict[key] -= 1
-
-
-def _generate_example(A: _Array, p: _Array, cache: dict):
+def _generate_example(A: _Array, ps: _Array, cache: dict):
     graphs = []
 
-    p = list(np.copy(p))
+    ps = list(np.copy(ps))
     m, n = A.shape
     offline_nodes = frozenset(np.arange(n))
-    reduced_nodes = frozenset(np.arange(n))
-    reduced_of_node = dict(zip(range(n), range(n)))
-    reduced_A = np.copy(A)
+    matched_nodes = set()
 
     for t in range(m):
-        hint, neighbor_mask = one_step_stochastic_opt(
+        hint = one_step_stochastic_opt(
             A, offline_nodes, t, cache)
-        graphs.append(_to_pyg(reduced_A, p, hint, neighbor_mask))
+        hint = np.max(hint) - hint
+        graphs.append(_to_pyg_train(A, ps, offline_nodes, t, hint))
         choice = cache[t][offline_nodes][1]
+        if choice != -1:
+            matched_nodes.add(choice)
+            matched_nodes.add(n + t)
 
         offline_nodes = diff(offline_nodes, choice)
-
-        if choice != -1:
-            reduced_nodes = diff(reduced_nodes, reduced_of_node[choice])
-            _update(reduced_of_node, choice)
-
-        reduced_A = reduced_A[1:, :]
-        reduced_A = np.take(reduced_A, list(reduced_nodes), axis=1)
-        reduced_nodes = frozenset(np.arange(len(reduced_nodes)))
-        p.pop()
 
     return graphs
 
 
-def generate_examples(num: int, m: int, n: int, p: _Array, **kwargs):
+def generate_examples(num: int, m: int, n: int, ps: _Array, **kwargs):
     dataset = []
     for _ in range(num):
         A = sample_bipartite_graph(m, n, **kwargs)
-        cache = cache_stochastic_opt(A, p)
-        dataset.extend(_generate_example(A, p, cache))
+        cache = cache_stochastic_opt(A, ps)
+        dataset.extend(_generate_example(A, ps, cache))
     return dataset

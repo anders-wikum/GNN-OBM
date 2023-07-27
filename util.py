@@ -36,21 +36,24 @@ def _symmetrize(adj):
     return A
 
 
-def _extract_edges(A: _Array):
+def _extract_edges(A: _Array, offline_nodes: frozenset, t: int):
     m, n = A.shape
     edge_index = []
     edge_attr = []
-
     # Edges/edge weights in underlying graph
-    for i in range(m):
-        for j in range(n):
-            if A[i, j] > 0:
-                edge_index.append([i, j])
+    for i in range(t, m):
+        for j in offline_nodes:
+            if (A[i, j] > 0):
+                edge_index.append([j, n + i])
+                edge_index.append([n + i, j])
+                edge_attr.append([A[i, j]])
                 edge_attr.append([A[i, j]])
 
     # Virtual node representing no match
-    for j in range(n):
-        edge_index.append([n + m, j])
+    for i in range(t, m):
+        edge_index.append([n + m, n + i])
+        edge_index.append([n + i, n + m])
+        edge_attr.append([0])
         edge_attr.append([0])
 
     return edge_index, edge_attr
