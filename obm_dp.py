@@ -105,24 +105,24 @@ def stochastic_opt(
 
 def greedy(
     A: _Array,
-    coin_flips: _Array
+    coin_flips: _Array,
+    r: float
 ):
     m, n = A.shape
     offline_nodes = frozenset(np.arange(n))
     matching = []
     value = 0
 
-    def _mask(offline_nodes, adj):
-        return [adj[i] if i in offline_nodes else 0 for i in range(n)]
+    A = np.copy(A)
 
     for t in range(m):
         if coin_flips[t]:
-            masked_adj = _mask(offline_nodes, A[t, :])
-            choice = np.argmax(masked_adj)
-            if choice in offline_nodes:
+            choice = np.argmax(A[t, :])
+            if choice in offline_nodes and A[t, choice] > r:
                 matching.append((t, choice))
                 offline_nodes = diff(offline_nodes, choice)
                 value += A[t, choice]
+                A[:, choice] = 0
 
     return matching, value
 

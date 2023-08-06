@@ -1,9 +1,11 @@
 from params import SAMPLER_SPECS, GRAPH_TYPES, _Array
 from obm_dp import one_step_stochastic_opt, cache_stochastic_opt
-from util import _random_subset, _extract_edges, diff, _neighbors
+from util import _random_subset, _extract_edges, diff, _neighbors, _load_gmission
+import pandas as pd
 import numpy as np
 import networkx as nx
 import torch
+import random
 from torch_geometric.data import Data
 
 
@@ -157,6 +159,7 @@ def _sample_geom_bipartite_graph(m: int, n: int, **kwargs):
     # m x n matrix with pairwise euclidean distances
     dist = np.linalg.norm(red[:, None, :] - blue[None, :, :], axis=-1)
     dist[dist < threshold] = 0
+
     return scaling * dist
 
 
@@ -164,12 +167,33 @@ def _sample_complete_bipartite_graph(m: int, n: int, **kwargs):
     return np.random.rand(m, n)
 
 
+def _sample_gmission_bipartite_graph(m: int, n: int, **kwargs):
+    edge_df = _load_gmission()
+    task_subset = random.sample(range(1, 712), m)
+    worker_subset = random.sample(range(1, 533), n)
+
+    subgraph_edges = edge_df[
+        edge_df.worker_type.isin(worker_subset) &
+        edge_df.task_type.isin(task_subset)
+    ]
+
+    A = np.array(
+        subgraph_edges.pivot(
+            index='task_type', columns='worker_type', values='weight')
+        .fillna(value=0)
+        .reindex(columns=worker_subset, index=task_subset, fill_value=0)
+    )
+
+    return A
+
+
 def sample_bipartite_graph(m: int, n: int, **kwargs) -> _Array:
     SAMPLER_ROUTER = {
         'ER': _sample_er_bipartite_graph,
         'BA': _sample_ba_bipartite_graph,
         'GEOM': _sample_geom_bipartite_graph,
-        'COMP': _sample_complete_bipartite_graph
+        'COMP': _sample_complete_bipartite_graph,
+        'GM': _sample_gmission_bipartite_graph
     }
 
     graph_type = kwargs.get('graph_type', '[not provided]')
@@ -268,16 +292,6 @@ def _to_pyg(
     '''
     m, n = A.shape
     edge_index, edge_attr = _extract_edges(A, offline_nodes, t)
-    # edge_probs = []
-    # for [u, v] in edge_index:
-    #     if u == m + n or v == m + n:
-    #         edge_probs.append([0])
-    #     elif u == n + t or v == n + t:
-    #         edge_probs.append([1])
-    #     elif u >= n and u < n + m:
-    #         edge_probs.append([p[u - n]])
-    #     elif v >= n and v < n + m:
-    #         edge_probs.append([p[v - n]])
 
     offline_mask = _gen_mask(n + m + 1, slice(0, n, 1))
     arrival_mask = _gen_mask(n + m + 1, n + t)
@@ -312,7 +326,7 @@ def _to_pyg(
     return x, edge_index, edge_attr, neighbor_mask, graph_features
 
 
-def _generate_example(A: _Array, ps: _Array, cache: dict):
+def _generate_example(A: _Array, ps: _Array, head: str, cache: dict):
     graphs = []
 
     ps = list(np.copy(ps))
@@ -321,9 +335,16 @@ def _generate_example(A: _Array, ps: _Array, cache: dict):
     matched_nodes = set()
 
     for t in range(m):
+
         hint = one_step_stochastic_opt(
             A, offline_nodes, t, cache)
-        hint = np.max(hint) - hint
+        if head == 'regression':
+            hint = hint - hint[-1]
+        elif head == 'classification':
+            hint = [1 * (np.argmax(hint) == len(hint) - 1)]
+        else:
+            raise NotImplemented
+
         graphs.append(_to_pyg_train(A, ps, offline_nodes, t, hint))
         choice = cache[t][offline_nodes][1]
         if choice != -1:
@@ -335,10 +356,10 @@ def _generate_example(A: _Array, ps: _Array, cache: dict):
     return graphs
 
 
-def generate_examples(num: int, m: int, n: int, ps: _Array, **kwargs):
+def generate_examples(num: int, m: int, n: int, ps: _Array, head: str, **kwargs):
     dataset = []
     for _ in range(num):
         A = sample_bipartite_graph(m, n, **kwargs)
         cache = cache_stochastic_opt(A, ps)
-        dataset.extend(_generate_example(A, ps, cache))
+        dataset.extend(_generate_example(A, ps, head, cache))
     return dataset
