@@ -1,5 +1,6 @@
 from itertools import chain, combinations
 import numpy as np
+import pandas as pd
 from params import _Array
 
 
@@ -61,3 +62,21 @@ def _extract_edges(A: _Array, offline_nodes: frozenset, t: int):
 
 def _neighbors(A: _Array, S: set, t: int) -> _Array:
     return [u for u in S if A[t, u] > 0]
+
+
+def _load_gmission():
+    edge_df = pd.read_csv('./data/edges.txt', header=None)
+    edge_df[['worker_type', 'task_type']
+            ] = edge_df[0].str.split(';', expand=True)
+    edge_df = edge_df \
+        .drop(columns=[0]) \
+        .rename(columns={1: 'weight'}) \
+        .assign(worker_type=lambda x: x['worker_type'].apply(float).apply(int)) \
+        .assign(task_type=lambda x: x['task_type'].apply(float).apply(int)) \
+        .assign(weight=lambda x: x['weight'].apply(float))
+
+    # Normalize edge weights
+    edge_df['weight'] = (edge_df['weight'] - edge_df['weight'].min()) \
+        / (edge_df['weight'].max() - edge_df['weight'].min())
+
+    return edge_df

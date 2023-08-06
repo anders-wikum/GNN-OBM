@@ -104,6 +104,12 @@ def range_of_node(S: frozenset, t: int, cache: dict, A: _Array):
     return np.max(values_to_go) - np.min(values_to_go)
 
 
+def std_of_node(S: frozenset, t: int, cache: dict, A: _Array):
+    values_to_go = hints_of_node(S, t, cache, A)
+    values_to_go = values_to_go[values_to_go >= 0]
+    return np.std(values_to_go)
+
+
 def quantity_of_cache_layer(cache: dict, t: int, node_func: callable, A: _Array):
     return np.array([node_func(S, t, cache, A) for S in cache[t].keys() if len(S) > 0])
 
@@ -122,5 +128,6 @@ NODE_FUNCS = {
     'greedy_correctness': greedy_correctness_of_node,
     'uniform_suboptimality': uniform_suboptimality_of_node,
     'uniform_correctness': uniform_correctness_of_node,
-    'range': range_of_node
+    'range': range_of_node,
+    'std': std_of_node
 }
