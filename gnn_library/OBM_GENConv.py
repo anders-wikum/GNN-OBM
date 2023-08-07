@@ -50,7 +50,7 @@ class OBM_GENConv(torch.nn.Module):
 
         self.convs = nn.ModuleList(conv_modules)
         self.regression_head = nn.Linear(
-            hidden_dim + args.graph_feature_dim, output_dim)
+            hidden_dim, output_dim)
 
         if self.classify:
             self.pool = global_max_pool
@@ -65,7 +65,7 @@ class OBM_GENConv(torch.nn.Module):
             x = self.convs[i](x, edge_index, edge_attr)
             x = F.relu(x)
             x = F.dropout(x, self.dropout, self.training)
-        x = self.regression_head(torch.hstack((x, graph_features.T)))
+        x = self.regression_head(x)
         if self.classify:
             x = F.sigmoid(x[-1])
         return x
