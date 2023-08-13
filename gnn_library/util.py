@@ -118,12 +118,13 @@ def train(train_loader: DataLoader, test_loader: DataLoader, args: dict):
             batch.to(device)
             opt.zero_grad()
             pred = model(batch.x, batch.edge_index,
-                         batch.edge_attr, batch.batch, batch.graph_features)
+                         batch.edge_attr, batch.num_graphs, batch.graph_features)
+ 
             loss = loss_fn(pred, batch.hint, batch.neighbors)
             loss.backward()
             opt.step()
 
-            total_loss += loss.item() * batch.num_graphs
+            total_loss += loss.item()
         total_loss /= len(train_loader.dataset)
         print(total_loss)
         train_losses.append(total_loss)
@@ -150,9 +151,10 @@ def test(loader, test_model, loss_fn, device):
         batch.to(device)
         with torch.no_grad():
             pred = test_model(batch.x, batch.edge_index,
-                              batch.edge_attr, batch.batch, batch.graph_features)
+                              batch.edge_attr, batch.num_graphs, batch.graph_features)
+            
             loss = loss_fn(pred, batch.hint, batch.neighbors)
-            total_loss += loss * batch.num_graphs
+            total_loss += loss
 
     total_loss /= len(loader.dataset)
 

@@ -27,6 +27,8 @@ class OBM_GENConv(torch.nn.Module):
         super(OBM_GENConv, self).__init__()
 
         hidden_dim = args.hidden_dim
+        self.batch_size = args.batch_size
+        self.graph_feature_dim = args.graph_feature_dim
         self.dropout = args.dropout
         self.num_layers = args.num_layers
         self.classify = (args.head == 'classification')
@@ -50,7 +52,7 @@ class OBM_GENConv(torch.nn.Module):
 
         self.convs = nn.ModuleList(conv_modules)
         self.regression_head = nn.Linear(
-            hidden_dim, output_dim)
+            hidden_dim + self.graph_feature_dim, output_dim)
 
         if self.classify:
             self.pool = global_max_pool
@@ -60,12 +62,27 @@ class OBM_GENConv(torch.nn.Module):
             conv.reset_parameters()
         self.regression_head.reset_parameters()
 
-    def forward(self, x, edge_index, edge_attr, batch, graph_features):
+    def forward(self, x, edge_index, edge_attr, num_graphs, graph_features):
         for i in range(self.num_layers):
             x = self.convs[i](x, edge_index, edge_attr)
             x = F.relu(x)
             x = F.dropout(x, self.dropout, self.training)
-        x = self.regression_head(x)
+
+        if self.graph_feature_dim > 0:
+            num_nodes = x.size(dim=0) // num_graphs
+            graph_features = torch.cat(
+                graph_features.view(
+                    num_graphs,
+                    self.graph_feature_dim,
+                    num_nodes
+                ).unbind(dim=0), 
+                dim=1
+            )
+            x = self.regression_head(torch.hstack((x, graph_features.T)))
+
+        else:
+            x = self.regression_head(x)
+
         if self.classify:
-            x = F.sigmoid(x[-1])
+            x = F.sigmoid(x.view(num_graphs, -1)[:, -1])
         return x
