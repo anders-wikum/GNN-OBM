@@ -220,12 +220,15 @@ def _gen_mask(size: tuple, slice: object) -> _Array:
 
 
 def _positional_encoder(size: int):
+    #TODO fix this
+    return torch.tensor(np.linspace(0, 1, size))
     return torch.tensor(np.random.uniform(0, 1, size))
 
 
 def _arrival_encoder(p: _Array, t: int, size: int):
     p = np.copy(p)
     p[t] = 1
+    p[:t] = 1
     fill_size = size - len(p) - 1
     return torch.tensor([*([0] * fill_size), *p, 0])
 
@@ -275,6 +278,43 @@ def _neighbor_encoder(A, offline_nodes, t):
     N_t = _neighbors(A, offline_nodes, t)
     return torch.tensor([*[u in N_t for u in np.arange(n + m)], True])
 
+def _update_pyg(data: Data, t: int, choice: int, A: _Array, offline_nodes: frozenset):
+    _, n = A.shape
+    def _filter_choice_edges(edge_index, edge_attr):
+        choice_mask = (edge_index != choice).all(dim=0)
+        t_mask = (edge_index != n + t - 1).all(dim=0)
+        mask = torch.logical_and(choice_mask, t_mask)
+        return edge_index[:, mask], edge_attr[mask, :]
+    
+    def _update_node_features(x):
+        # x[n + t - 1, 2] = 0
+        x[n + t, 2] = 1
+        x[n + t, 3] = 1
+        x[n + t - 1, 3] = 0
+        return x
+
+    def _update_neighbors():
+        return _neighbor_encoder(A, offline_nodes, t)
+    
+    def _update_graph_features(graph_features):
+        if t > 1:
+            return (graph_features * t) / (t - 1)
+        return graph_features + 1
+
+    
+    edge_index, edge_attr = _filter_choice_edges(
+        data.edge_index,
+        data.edge_attr
+    )
+
+    return Data(
+        x=_update_node_features(data.x),
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        neighbors=_update_neighbors(),
+        graph_features=_update_graph_features(data.graph_features)
+    )
+    
 
 def _to_pyg(
     A: _Array,
@@ -302,10 +342,11 @@ def _to_pyg(
     ratio = torch.tensor([len(offline_nodes) / (m - t)] * (n + m + 1))
     t = torch.tensor([t] * (n + m + 1))
 
+    #TODO: Add back ratio as graph feature
     graph_features = torch.stack(
         [
             t,
-            ratio,
+            #ratio,
         ]).type(torch.FloatTensor)
 
     x = torch.stack(
@@ -317,11 +358,6 @@ def _to_pyg(
         ]).T.type(torch.FloatTensor)
     edge_index = torch.tensor(edge_index).T
     edge_attr = torch.tensor(edge_attr).type(torch.FloatTensor)
-    # edge_attr = torch.stack(
-    #     [
-    #         torch.tensor(edge_attr),
-    #         torch.tensor(edge_probs)
-    #     ]).T.type(torch.FloatTensor).squeeze()
 
     return x, edge_index, edge_attr, neighbor_mask, graph_features
 
