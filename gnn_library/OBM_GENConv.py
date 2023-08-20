@@ -1,18 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GENConv, global_max_pool
+from torch_geometric.nn import GENConv, SAGPooling
 
 
 class OBM_GENConv(torch.nn.Module):
     """
-    GNN to predict node-level embeddings. Then applies a post-message passing layer to transform into the output
-    dimension.
-    Part of the code definition is inspired by Colab 2:
-    https://colab.research.google.com/drive/1xHmpjVO-Z74NK-dH3qoUBTf-tKUPfOKW?usp=sharing
-
-    The main model used for convolutions is NNConv from the "Dynamic Edge-Conditioned Filters in Convolutional Neural
-    Networks on Graphs" <https://arxiv.org/abs/1704.02901> paper
+    GNN to predict node-level embeddings. Then applies a linear layer to 
+    transform into the output dimension.
     """
 
     def __init__(self, input_dim, output_dim, edge_feature_dim, args):
@@ -20,14 +15,15 @@ class OBM_GENConv(torch.nn.Module):
         Initializing the GNN
         Args:
             input_dim: dimension of node features
-            output_dim: output dimension required
+            output_dim: output dimension required (1 for regression/
+                classification tasks)
             edge_feature_dim: dimension of the edge features
-            args: object containing the rest of the GNN description, including the number of layers, dropout, ...
+            args: object containing the rest of the GNN description, including
+                the number of layers, dropout, etc.
         """
         super(OBM_GENConv, self).__init__()
 
         hidden_dim = args.hidden_dim
-        self.batch_size = args.batch_size
         self.graph_feature_dim = args.graph_feature_dim
         self.dropout = args.dropout
         self.num_layers = args.num_layers
@@ -55,14 +51,15 @@ class OBM_GENConv(torch.nn.Module):
             hidden_dim + self.graph_feature_dim, output_dim)
 
         if self.classify:
-            self.pool = global_max_pool
+            self.pool = SAGPooling(in_channels=1, ratio=1)
 
     def reset_parameters(self):
         for conv in self.convs:
             conv.reset_parameters()
         self.regression_head.reset_parameters()
+        self.pool.reset_parameters()
 
-    def forward(self, x, edge_index, edge_attr, num_graphs, graph_features):
+    def forward(self, x, edge_index, edge_attr, batch, num_graphs, graph_features):
         for i in range(self.num_layers):
             x = self.convs[i](x, edge_index, edge_attr)
             x = F.relu(x)
@@ -84,5 +81,5 @@ class OBM_GENConv(torch.nn.Module):
             x = self.regression_head(x)
 
         if self.classify:
-            x = F.sigmoid(x.view(num_graphs, -1)[:, -1])
+            x = F.sigmoid(x.view(num_graphs, -1)[:, -1].flatten())
         return x

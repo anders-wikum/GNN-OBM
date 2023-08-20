@@ -1,4 +1,5 @@
 import torch
+import pickle
 import copy
 
 import torch.nn as nn
@@ -7,7 +8,7 @@ import torch.nn.functional as F
 
 from torch_geometric.loader import DataLoader
 from tqdm import trange
-from .params import NETWORKS
+from .params import NETWORKS, REQ_ARGS, MODEL_SAVE_FOLDER
 
 
 class MaskedMSELoss(nn.Module):
@@ -36,7 +37,7 @@ class BinaryCrossEntropyLoss(nn.Module):
     def __init__(self):
         super(BinaryCrossEntropyLoss, self).__init__()
 
-    def forward(self, pred, label, nieghbors):
+    def forward(self, pred, label, neighbors):
         return F.binary_cross_entropy(pred, label)
 
 
@@ -75,34 +76,35 @@ class objectview(object):
         self.__dict__ = d
 
 
-def train(train_loader: DataLoader, test_loader: DataLoader, args: dict):
-    """
-    Trains a GNN model, periodically testing it and accumulating loss values
-    Args:
-        args: dictionary object containing training parameters
-    """
-
-    # Input dimension is 1 (we only have demand information for every node)
-    # Edge feature dimension is 2 (capacity and cost per edge)
-    # Output dimension is 1 since we predict scalar potential values for each vertex
+def _get_loss(args):
+    if args.head == 'regression':
+        return MaskedMSELoss()
+    elif args.head == 'classification':
+        return BinaryCrossEntropyLoss()
+    else:
+        raise NotImplemented
+    
+def _get_model(args: dict):
     model = NETWORKS[args.processor](
         args.node_feature_dim,
         1,
         args.edge_feature_dim,
         args
     )
+    model.to(args.device)
+    return model
 
-    if args.head == 'regression':
-        loss_fn = MaskedMSELoss()
-    elif args.head == 'classification':
-        loss_fn = BinaryCrossEntropyLoss()
-    else:
-        raise NotImplemented
-
-    device = args.device
-
+def train(train_loader: DataLoader, test_loader: DataLoader, args: dict):
+    """
+    Trains a GNN model, periodically testing it and accumulating loss values
+    Args:
+        args: dictionary object containing training parameters
+    """
+    args = objectview(args)
+    model = _get_model(args)
+    loss_fn = _get_loss(args)
     _, opt = build_optimizer(args, model.parameters())
-    model.to(device)
+    device = args.device
 
     # accumulate model performance for plotting
     train_losses = []
@@ -117,8 +119,14 @@ def train(train_loader: DataLoader, test_loader: DataLoader, args: dict):
         for batch in train_loader:
             batch.to(device)
             opt.zero_grad()
-            pred = model(batch.x, batch.edge_index,
-                         batch.edge_attr, batch.num_graphs, batch.graph_features)
+            pred = model(
+                batch.x,
+                batch.edge_index,
+                batch.edge_attr,
+                batch.batch, 
+                batch.num_graphs,
+                batch.graph_features
+            )
  
             loss = loss_fn(pred, batch.hint, batch.neighbors)
             loss.backward()
@@ -150,8 +158,14 @@ def test(loader, test_model, loss_fn, device):
     for batch in loader:
         batch.to(device)
         with torch.no_grad():
-            pred = test_model(batch.x, batch.edge_index,
-                              batch.edge_attr, batch.num_graphs, batch.graph_features)
+            pred = test_model(
+                batch.x,
+                batch.edge_index,
+                batch.edge_attr,
+                batch.batch, 
+                batch.num_graphs,
+                batch.graph_features
+            )
             
             loss = loss_fn(pred, batch.hint, batch.neighbors)
             total_loss += loss
@@ -159,3 +173,20 @@ def test(loader, test_model, loss_fn, device):
     total_loss /= len(loader.dataset)
 
     return total_loss
+
+
+def save(model: object, args: dict, name: str) -> None:
+    path = MODEL_SAVE_FOLDER + name
+    filtered_args = {key: args[key] for key in REQ_ARGS}
+    torch.save(model.state_dict(), path)
+    pickle.dump(filtered_args, open(path + '_args.pickle', 'wb'))
+
+
+def load(name: str) -> object:
+    path = MODEL_SAVE_FOLDER + name
+    args = pickle.load(open(path + '_args.pickle', 'rb'))
+    args = objectview(args)
+    model = _get_model(args)
+    model.load_state_dict(torch.load(path))
+    model.eval()
+    return model, args

@@ -88,7 +88,6 @@ def stochastic_opt(
 ):
     m, n = A.shape
     offline_nodes = frozenset(np.arange(n))
-    # First n are offline, next m online
     matching = []
     value = 0
 

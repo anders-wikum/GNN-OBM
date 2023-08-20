@@ -2,6 +2,14 @@ from itertools import chain, combinations
 import numpy as np
 import pandas as pd
 from params import _Array
+from torch_geometric.data import InMemoryDataset
+
+
+class Dataset(InMemoryDataset):
+
+    def __init__(self, data_list):
+        super().__init__(None)
+        self.data, self.slices = self.collate(data_list)
 
 
 def powerset(iterable):
