@@ -1,9 +1,9 @@
 from params import SAMPLER_SPECS, GRAPH_TYPES, _Array
-from obm_dp import one_step_stochastic_opt, cache_stochastic_opt
-from util import _random_subset, _extract_edges, diff, _neighbors, _load_gmission
-import pandas as pd
+from algorithms import one_step_stochastic_opt, cache_stochastic_opt
+from util import _random_subset, _extract_edges, diff, _neighbors, \
+      _load_gmission
+from typing import Optional
 import numpy as np
-import networkx as nx
 import torch
 import random
 from torch_geometric.data import Data
@@ -31,62 +31,17 @@ def _sample_er_bipartite_graph(m: int, n: int, **kwargs):
     return mat
 
 
-def _add_edges_to_graph(
-    G,
-    source: list,
-    targets: list,
-    ba_param: int,
-    source_repeated_nodes: list,
-    target_repeated_nodes: list,
-) -> None:
-
-    G.add_edges_from(zip([source] * ba_param, targets))
-    target_repeated_nodes.extend(targets)
-    source_repeated_nodes.extend([source] * ba_param)
-
-
 def _barabasi_albert_graph(m: int, n: int, ba_param: int) -> _Array:
-    # Add m initial nodes (m0 in barabasi-speak)
-    G = nx.empty_graph(2 * ba_param)
-    G.name = "barabasi_albert_graph(%s, %s, %s)" % (m, n, ba_param)
+    assert m >= ba_param, "Invalid specification"
+    A = np.zeros((m, n))
+    repeated_offline_nodes = list(range(n))
+    for i in range(m):
+        targets = _random_subset(repeated_offline_nodes, ba_param)
+        for j in targets:
+            A[i, j] = 1
+        repeated_offline_nodes.extend(targets)
 
-    # List of existing nodes, with nodes repeated once for each adjacent edge
-    LHS_repeated_nodes = list(range(0, ba_param))
-    RHS_repeated_nodes = list(range(m, m + ba_param))
-
-    # Start adding the other n-m nodes. The first node is m.
-    LHS_source = 0
-    RHS_source = m
-
-    alternate = True
-    next_node = 'LHS'
-
-    while LHS_source < m or RHS_source < m + n:
-        if RHS_source == n + m:
-            next_node = 'LHS'
-            alternate = False
-        if LHS_source == m:
-            next_node = 'RHS'
-            alternate = False
-
-        if next_node == 'LHS':
-            RHS_targets = _random_subset(RHS_repeated_nodes, ba_param)
-            _add_edges_to_graph(G, LHS_source, RHS_targets,
-                                ba_param, LHS_repeated_nodes, RHS_repeated_nodes)
-            LHS_source += 1
-            if alternate:
-                next_node = 'RHS'
-
-        else:
-            LHS_targets = _random_subset(LHS_repeated_nodes, ba_param)
-            _add_edges_to_graph(G, RHS_source, LHS_targets,
-                                ba_param, RHS_repeated_nodes, LHS_repeated_nodes)
-            G.add_edges_from(zip([RHS_source] * ba_param, LHS_targets))
-            RHS_source += 1
-            if alternate:
-                next_node = 'LHS'
-
-    return G
+    return A
 
 
 def _sample_ba_bipartite_graph(m: int, n: int, **kwargs):
@@ -95,13 +50,7 @@ def _sample_ba_bipartite_graph(m: int, n: int, **kwargs):
     weighted = kwargs['weighted']
     ba_param = kwargs['ba_param']
 
-    ba_graph = _barabasi_albert_graph(m, n, ba_param)
-    A = np.zeros((m, n))
-    for (u, v) in ba_graph.edges():
-        if u > v:
-            A[v, u - m] = 1
-        else:
-            A[u, v - m] = 1
+    A = _barabasi_albert_graph(m, n, ba_param)
 
     if weighted:
         A = _add_uniform_weights(A, low, high)
@@ -220,8 +169,6 @@ def _gen_mask(size: tuple, slice: object) -> _Array:
 
 
 def _positional_encoder(size: int):
-    #TODO fix this
-    return torch.tensor(np.linspace(0, 1, size))
     return torch.tensor(np.random.uniform(0, 1, size))
 
 
@@ -233,94 +180,53 @@ def _arrival_encoder(p: _Array, t: int, size: int):
     return torch.tensor([*([0] * fill_size), *p, 0])
 
 
-def _to_pyg_train(
-    A: _Array,
-    p: _Array,
-    offline_nodes: frozenset,
-    t: int,
-    hint: _Array
-):
-    x, edge_index, edge_attr, neighbor_mask, graph_features = _to_pyg(
-        A, p, offline_nodes, t)
-
-    hint = torch.tensor(hint).type(torch.FloatTensor)
-
-    return Data(
-        x=x,
-        edge_index=edge_index,
-        edge_attr=edge_attr,
-        neighbors=neighbor_mask,
-        hint=hint,
-        graph_features=graph_features
-    )
-
-
-def _to_pyg_test(
-    A: _Array,
-    p: _Array,
-    offline_nodes: frozenset,
-    t: int
-
-):
-    x, edge_index, edge_attr, neighbor_mask, graph_features = _to_pyg(
-        A, p, offline_nodes, t)
-    return Data(
-        x=x,
-        edge_index=edge_index,
-        edge_attr=edge_attr,
-        neighbors=neighbor_mask,
-        graph_features=graph_features
-    )
-
-
 def _neighbor_encoder(A, offline_nodes, t):
     m, n = A.shape
     N_t = _neighbors(A, offline_nodes, t)
     return torch.tensor([*[u in N_t for u in np.arange(n + m)], True])
 
-def _update_pyg(data: Data, t: int, choice: int, A: _Array, offline_nodes: frozenset):
-    _, n = A.shape
-    def _filter_choice_edges(edge_index, edge_attr):
-        choice_mask = (edge_index != choice).all(dim=0)
-        t_mask = (edge_index != n + t - 1).all(dim=0)
-        mask = torch.logical_and(choice_mask, t_mask)
-        return edge_index[:, mask], edge_attr[mask, :]
-    
-    def _update_node_features(x):
-        # x[n + t - 1, 2] = 0
-        x[n + t, 2] = 1
-        x[n + t, 3] = 1
-        x[n + t - 1, 3] = 0
-        return x
 
-    def _update_neighbors():
-        return _neighbor_encoder(A, offline_nodes, t)
-    
-    def _update_graph_features(graph_features):
-        if t > 1:
-            return (graph_features * t) / (t - 1)
-        return graph_features + 1
+def _gen_node_features(m, n, p, t):
+    offline_mask = _gen_mask(n + m + 1, slice(0, n, 1))
+    arrival_mask = _gen_mask(n + m + 1, n + t)
+    pos_encoder = _positional_encoder(n + m + 1)
+    arrival_probs = _arrival_encoder(p, t, n + m + 1)
 
-    
-    edge_index, edge_attr = _filter_choice_edges(
-        data.edge_index,
-        data.edge_attr
-    )
+    return torch.stack(
+        [
+            pos_encoder,
+            offline_mask,
+            arrival_probs,
+            arrival_mask
+        ]
+    ).T.type(torch.FloatTensor)
 
-    return Data(
-        x=_update_node_features(data.x),
-        edge_index=edge_index,
-        edge_attr=edge_attr,
-        neighbors=_update_neighbors(),
-        graph_features=_update_graph_features(data.graph_features)
-    )
+
+def _gen_edge_tensors(A, offline_nodes, t):
+    edge_index, edge_attr = _extract_edges(A, offline_nodes, t)
+    edge_index = torch.tensor(edge_index).T
+    edge_attr = torch.tensor(edge_attr).type(torch.FloatTensor)
+    return edge_index, edge_attr
+
+
+def _gen_graph_features(m, n, offline_nodes, t):
+    ratio = torch.tensor([len(offline_nodes) / (m - t)] * (n + m + 1))
+    t = torch.tensor([t] * (n + m + 1))
+
+    return torch.stack(
+        [
+            t,
+            ratio,
+        ]
+    ).type(torch.FloatTensor)
     
 
 def _to_pyg(
     A: _Array,
     p: _Array,
     offline_nodes: frozenset,
-    t: int
+    t: int,
+    hint: Optional[_Array] = None
 ):
     '''
     Generates a data sample. [A] is the adjacency matrix consisting of
@@ -331,35 +237,56 @@ def _to_pyg(
 
     '''
     m, n = A.shape
-    edge_index, edge_attr = _extract_edges(A, offline_nodes, t)
+    
+    x = _gen_node_features(m, n, p, t)
+    edge_index, edge_attr = _gen_edge_tensors(A, offline_nodes, t)
+    neighbors = _neighbor_encoder(A, offline_nodes, t)
+    graph_features = _gen_graph_features(m, n, offline_nodes, t)
 
-    offline_mask = _gen_mask(n + m + 1, slice(0, n, 1))
-    arrival_mask = _gen_mask(n + m + 1, n + t)
-    pos_encoder = _positional_encoder(n + m + 1)
-    neighbor_mask = _neighbor_encoder(A, offline_nodes, t)
-    arrival_probs = _arrival_encoder(p, t, n + m + 1)
+    instance = Data(
+        x=x,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        graph_features=graph_features,
+        neighbors=neighbors,
+    )
 
-    ratio = torch.tensor([len(offline_nodes) / (m - t)] * (n + m + 1))
-    t = torch.tensor([t] * (n + m + 1))
+    if hint is not None:
+        instance.hint = torch.FloatTensor(hint)
 
-    #TODO: Add back ratio as graph feature
-    graph_features = torch.stack(
-        [
-            t,
-            #ratio,
-        ]).type(torch.FloatTensor)
+    return instance
 
-    x = torch.stack(
-        [
-            pos_encoder,
-            offline_mask,
-            arrival_probs,
-            arrival_mask
-        ]).T.type(torch.FloatTensor)
-    edge_index = torch.tensor(edge_index).T
-    edge_attr = torch.tensor(edge_attr).type(torch.FloatTensor)
 
-    return x, edge_index, edge_attr, neighbor_mask, graph_features
+def _update_pyg(data: Data, t: int, choice: int, A: _Array, offline_nodes: frozenset):
+    m, n = A.shape
+    def _filter_choice_edges(edge_index, edge_attr):
+        mask = ((edge_index != choice) & (edge_index != n + t - 1)).all(dim=0)
+        return edge_index[:, mask], edge_attr[mask, :]
+    
+    def _update_node_features():
+        data.x[n + t, 2] = 1
+        data.x[n + t, 3] = 1
+        data.x[n + t - 1, 3] = 0
+
+    def _update_edges():
+        edge_index, edge_attr = _filter_choice_edges(
+            data.edge_index,
+            data.edge_attr
+        )
+        data.edge_index = edge_index
+        data.edge_attr = edge_attr
+
+    def _update_neighbors():
+        data.neighbors = _neighbor_encoder(A, offline_nodes, t)
+    
+    def _update_graph_features():
+        data.graph_features[0] = data.graph_features[0] + 1
+        data.graph_features[1] = data.graph_features[1] * (m - t) / (m - t + 1)
+
+    _update_node_features()
+    _update_edges()
+    _update_graph_features()
+    _update_neighbors()
 
 
 def _generate_example(A: _Array, ps: _Array, head: str, cache: dict):
@@ -381,7 +308,7 @@ def _generate_example(A: _Array, ps: _Array, head: str, cache: dict):
         else:
             raise NotImplemented
 
-        graphs.append(_to_pyg_train(A, ps, offline_nodes, t, hint))
+        graphs.append(_to_pyg(A, ps, offline_nodes, t, hint))
         choice = cache[t][offline_nodes][1]
         if choice != -1:
             matched_nodes.add(choice)
