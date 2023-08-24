@@ -1,6 +1,10 @@
 import numpy as np
+from typing import Tuple
 
 _Array = np.ndarray
+_Instance = Tuple[_Array, _Array]
+
+# ============== Graph sampler params ===================== #
 
 GRAPH_TYPES = ['GEOM', 'ER', 'BA', 'COMP', 'GM']
 
@@ -11,3 +15,10 @@ SAMPLER_SPECS = {
     'COMP': set([]),
     'GM': set([])
 }
+
+# ============== END ====================================== #
+
+# ============== PyG converter params ===================== #
+
+
+# ============== END ====================================== #

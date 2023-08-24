@@ -2,7 +2,7 @@ import pytest
 import networkx as nx
 from util import _symmetrize
 
-from graph_generator import sample_bipartite_graph
+from instance_generator import sample_bipartite_graph
 
 
 TEST_CONFIGS = [
