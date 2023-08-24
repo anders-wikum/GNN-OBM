@@ -3,13 +3,47 @@ import numpy as np
 import pandas as pd
 from params import _Array
 from torch_geometric.data import InMemoryDataset
+from numpy.random import Generator
+from copy import copy
+import torch
 
 
 class Dataset(InMemoryDataset):
-
     def __init__(self, data_list):
         super().__init__(None)
         self.data, self.slices = self.collate(data_list)
+
+class NumpyDataset(Dataset):
+    def __init__(self, tup):
+        self.x = torch.FloatTensor(tup[0])
+        self.y = torch.FloatTensor(tup[1])
+        
+    def __getitem__(self, index):
+        x = self.x[index]
+        y = self.y[index]       
+        return (x, y)
+    
+    def __len__(self):
+        return len(self.x)
+    
+
+class objectview(object):
+    def __init__(self, d):
+        self.__dict__ = d
+
+
+def collect(output_lst):
+    all_instances = []
+    all_coin_flips = []
+    for instances, coin_flips in output_lst:
+        all_instances.extend(instances)
+        all_coin_flips.append(coin_flips)
+    
+    return all_instances, np.hstack(all_coin_flips)
+
+
+def fill_list(value: object, size: int):
+    return [copy(value) for _ in range(size)]
 
 
 def powerset(iterable):
@@ -23,7 +57,7 @@ def diff(S: frozenset, u: int) -> frozenset:
     return S.difference(set([u]))
 
 
-def _random_subset(seq, m):
+def _random_subset(seq, m, rng: Generator):
     """Return m unique elements from seq.
 
     This differs from random.sample which can return repeated
@@ -31,7 +65,7 @@ def _random_subset(seq, m):
     """
     targets = set()
     while len(targets) < m:
-        x = np.random.choice(seq)
+        x = rng.choice(seq)
         targets.add(x)
 
     return targets
@@ -88,3 +122,15 @@ def _load_gmission():
         / (edge_df['weight'].max() - edge_df['weight'].min())
 
     return edge_df
+
+
+def _extract_batch(batch):
+    num_graphs = batch.ptr.size(dim=0) - 1
+    return (
+        batch.x,
+        batch.edge_index,
+        batch.edge_attr,
+        batch.batch, 
+        num_graphs,
+        batch.graph_features
+    )

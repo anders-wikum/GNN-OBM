@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import NNConv
+from util import _extract_batch
 
 
 class OBM_NNConv(torch.nn.Module):
@@ -15,7 +16,7 @@ class OBM_NNConv(torch.nn.Module):
     Networks on Graphs" <https://arxiv.org/abs/1704.02901> paper
     """
 
-    def __init__(self, input_dim, output_dim, edge_feature_dim, args):
+    def __init__(self, args):
         """
         Initializing the GNN
         Args:
@@ -26,10 +27,17 @@ class OBM_NNConv(torch.nn.Module):
         """
         super(OBM_NNConv, self).__init__()
 
-        hidden_dim = args.hidden_dim
-        self.dropout = args.dropout
+        input_dim = args.node_feature_dim
         aggr = args.aggr
+        output_dim = args.output_dim
+        hidden_dim = args.hidden_dim
+        edge_feature_dim = args.edge_feature_dim
+        self.graph_feature_dim = args.graph_feature_dim
+        self.dropout = args.dropout
         self.num_layers = args.num_layers
+        self.classify = (args.head in ['classification', 'meta'])
+
+
         conv_modules = [NNConv(input_dim, hidden_dim, nn.Linear(
             edge_feature_dim, input_dim * hidden_dim), aggr=aggr)]
         conv_modules.extend(
@@ -45,9 +53,31 @@ class OBM_NNConv(torch.nn.Module):
             conv.reset_parameters()
         self.regression_head.reset_parameters()
 
-    def forward(self, x, edge_index, edge_attr, graph_features):
+    def forward(self, batch):
+        x, edge_index, edge_attr, batch, num_graphs, graph_features = \
+            _extract_batch(batch)
+        
         for i in range(self.num_layers):
             x = self.convs[i](x, edge_index, edge_attr)
             x = F.relu(x)
             x = F.dropout(x, self.dropout, self.training)
-        return self.regression_head(torch.hstack((x, graph_features.T)))
+
+        if self.graph_feature_dim > 0:
+            num_nodes = x.size(dim=0) // num_graphs
+            graph_features = torch.cat(
+                graph_features.view(
+                    num_graphs,
+                    self.graph_feature_dim,
+                    num_nodes
+                ).unbind(dim=0), 
+                dim=1
+            )
+            x = self.regression_head(torch.hstack((x, graph_features.T)))
+
+        else:
+            x = self.regression_head(x)
+
+        if self.classify:
+            x = x.view(num_graphs, num_nodes, -1)[:, -1, :].flatten()
+        return x
+

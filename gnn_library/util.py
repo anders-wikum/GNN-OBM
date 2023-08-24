@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
 from tqdm import trange
 from .params import NETWORKS, REQ_ARGS, MODEL_SAVE_FOLDER
+from util import objectview
 
 
 class MaskedMSELoss(nn.Module):
@@ -16,7 +17,7 @@ class MaskedMSELoss(nn.Module):
     def __init__(self):
         super(MaskedMSELoss, self).__init__()
 
-    def forward(self, pred, value_to_go, neighbor_mask):
+    def forward(self, pred, batch):
         """
         Computes MSE over neighbors of the arriving node.
         Args:
@@ -27,18 +28,34 @@ class MaskedMSELoss(nn.Module):
         Returns:
             Masked mean square error.
         """
+        value_to_go = batch.hint
+        neighbor_mask = batch.neighbors
         preds = pred[neighbor_mask].squeeze(dim=1)
-        match_penalty = 0  # (preds[-1] - value_to_go[-1]) ** 2
-        return F.mse_loss(preds, value_to_go) + match_penalty
+        return F.mse_loss(preds, value_to_go)
 
 
-class BinaryCrossEntropyLoss(nn.Module):
+class pygCrossEntropyLoss(nn.Module):
 
     def __init__(self):
-        super(BinaryCrossEntropyLoss, self).__init__()
+        super(pygCrossEntropyLoss, self).__init__()
 
-    def forward(self, pred, label, neighbors):
-        return F.binary_cross_entropy(pred, label)
+    def forward(self, pred, batch):
+        return F.cross_entropy(
+            pred,
+            batch.label,
+            batch.weight
+        )
+    
+
+class torchCrossEntropyLoss(nn.Module):
+
+    def __init__(self):
+        super(torchCrossEntropyLoss, self).__init__()
+
+    def forward(self, pred, batch):
+        (_, y) = batch
+        #print(pred.cpu().detach().numpy())
+        return F.mse_loss(pred, y)
 
 
 def build_optimizer(args, params):
@@ -71,40 +88,55 @@ def build_optimizer(args, params):
     return scheduler, optimizer
 
 
-class objectview(object):
-    def __init__(self, d):
-        self.__dict__ = d
-
-
+# TODO: Get classification working again
 def _get_loss(args):
     if args.head == 'regression':
         return MaskedMSELoss()
     elif args.head == 'classification':
-        return BinaryCrossEntropyLoss()
+        return pygCrossEntropyLoss()
+    elif args.head == 'meta':
+        return torchCrossEntropyLoss()
     else:
         raise NotImplemented
     
+
 def _get_model(args: dict):
-    model = NETWORKS[args.processor](
-        args.node_feature_dim,
-        1,
-        args.edge_feature_dim,
-        args
-    )
+    model = NETWORKS[args.processor](args)
     model.to(args.device)
     return model
 
-def train(train_loader: DataLoader, test_loader: DataLoader, args: dict):
+
+def train(train_loader, test_loader, args):
+    args = objectview(args)
+    model = _get_model(args)
+    loss_fn = _get_loss(args)
+    _, opt = build_optimizer(args, model.parameters())
+
+    return _train(
+        model=model,
+        loss_fn=loss_fn,
+        train_loader=train_loader,
+        test_loader=test_loader,
+        epochs=args.epochs,
+        opt=opt,
+        device=args.device
+    )
+
+
+def _train(
+        model: object,
+        loss_fn: callable,
+        train_loader: DataLoader,
+        test_loader: DataLoader,
+        epochs: int,
+        opt: optim.Optimizer,
+        device: SyntaxError
+        ):
     """
     Trains a GNN model, periodically testing it and accumulating loss values
     Args:
         args: dictionary object containing training parameters
     """
-    args = objectview(args)
-    model = _get_model(args)
-    loss_fn = _get_loss(args)
-    _, opt = build_optimizer(args, model.parameters())
-    device = args.device
 
     # accumulate model performance for plotting
     train_losses = []
@@ -112,33 +144,32 @@ def train(train_loader: DataLoader, test_loader: DataLoader, args: dict):
     best_loss = None
     best_model = None
 
-    for epoch in trange(args.epochs, desc="Training", unit="Epochs"):
+    for epoch in trange(epochs, desc="Training", unit="Epochs"):
         total_loss = 0
         model.train()
 
         for batch in train_loader:
-            batch.to(device)
+            if type(batch) is list:
+                batch = (batch[0].to(device), batch[1].to(device))
+                scale = batch[0].size(dim=0)
+            else:
+                batch.to(device)
+                scale = batch.num_graphs
             opt.zero_grad()
-            pred = model(
-                batch.x,
-                batch.edge_index,
-                batch.edge_attr,
-                batch.batch, 
-                batch.num_graphs,
-                batch.graph_features
-            )
- 
-            loss = loss_fn(pred, batch.hint, batch.neighbors)
+
+            pred = model(batch)
+            loss = loss_fn(pred, batch)
+
             loss.backward()
             opt.step()
 
-            total_loss += loss.item()
+            total_loss += loss.item() * scale
         total_loss /= len(train_loader.dataset)
         print(total_loss)
         train_losses.append(total_loss)
 
         if epoch % 2 == 0:
-            test_loss = test(test_loader, model, loss_fn, device)
+            test_loss = _test(test_loader, model, loss_fn, device)
             print(f'TEST LOSS: {test_loss}')
             test_losses.append(test_loss)
             if best_loss is None or test_loss < best_loss:
@@ -150,25 +181,22 @@ def train(train_loader: DataLoader, test_loader: DataLoader, args: dict):
     return train_losses, test_losses, best_model, best_loss
 
 
-def test(loader, test_model, loss_fn, device):
+def _test(loader, test_model, loss_fn, device):
     test_model.eval()
     test_model.to(device)
     total_loss = 0
 
     for batch in loader:
-        batch.to(device)
+        if type(batch) is list:
+            batch = (batch[0].to(device), batch[1].to(device))
+            scale = batch[0].size(dim=0)
+        else:
+            batch.to(device)
+            scale = batch.num_graphs
         with torch.no_grad():
-            pred = test_model(
-                batch.x,
-                batch.edge_index,
-                batch.edge_attr,
-                batch.batch, 
-                batch.num_graphs,
-                batch.graph_features
-            )
-            
-            loss = loss_fn(pred, batch.hint, batch.neighbors)
-            total_loss += loss
+            pred = test_model(batch)
+            loss = loss_fn(pred, batch)
+            total_loss += loss * scale
 
     total_loss /= len(loader.dataset)
 
@@ -177,7 +205,7 @@ def test(loader, test_model, loss_fn, device):
 
 def save(model: object, args: dict, name: str) -> None:
     path = MODEL_SAVE_FOLDER + name
-    filtered_args = {key: args[key] for key in REQ_ARGS}
+    filtered_args = {key: args[key] for key in REQ_ARGS[args['head']]}
     torch.save(model.state_dict(), path)
     pickle.dump(filtered_args, open(path + '_args.pickle', 'wb'))
 
