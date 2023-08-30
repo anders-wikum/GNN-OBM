@@ -6,6 +6,8 @@ from torch_geometric.data import InMemoryDataset
 from numpy.random import Generator
 from copy import copy
 import torch
+from typing import List
+from params import _Instance
 
 
 class Dataset(InMemoryDataset):
@@ -30,16 +32,6 @@ class NumpyDataset(Dataset):
 class objectview(object):
     def __init__(self, d):
         self.__dict__ = d
-
-
-def collect(output_lst):
-    all_instances = []
-    all_coin_flips = []
-    for instances, coin_flips in output_lst:
-        all_instances.extend(instances)
-        all_coin_flips.append(coin_flips)
-    
-    return all_instances, np.hstack(all_coin_flips)
 
 
 def fill_list(value: object, size: int):
@@ -134,3 +126,7 @@ def _extract_batch(batch):
         num_graphs,
         batch.graph_features
     )
+
+
+def _flip_coins(p: _Array, rng: Generator) -> _Array:
+    return np.vectorize(lambda x: rng.binomial(1, x))(p)
