@@ -189,14 +189,16 @@ def _sample_bipartite_graphs(
     ]
 
 
-def _sample_coin_flips(
+def _sample_probs(
     m: int,
     num: int,
     rng: Generator
 ) -> _Array:
-    p = rng.uniform(0.5, 1, (m, num))
-    return p, np.vectorize(lambda x: rng.binomial(1, x))(p)
     
+    # p = rng.uniform(0.5, 1, m)
+    # return np.vstack([p for _ in range(num)]).T
+    return rng.uniform(0.5, 1, (m, num))
+
 
 def sample_instances(
     m: int,
@@ -207,9 +209,9 @@ def sample_instances(
 ) -> Tuple[List[_Instance], _Array]:
     
     As = _sample_bipartite_graphs(m, n, num, rng, **kwargs)
-    ps, coin_flips = _sample_coin_flips(m, num, rng)
+    ps = _sample_probs(m, num, rng)
     instances = [
         (As[i], ps[:, i])
         for i in range(len(As))
     ]
-    return instances, coin_flips
+    return instances

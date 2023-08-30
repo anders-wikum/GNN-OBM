@@ -1,13 +1,12 @@
 from params import _Array, _Instance
 from algorithms import one_step_stochastic_opt, cache_stochastic_opt
-from util import _extract_edges, diff, _neighbors, fill_list
+from util import _extract_edges, diff, _neighbors, fill_list, _flip_coins
 from typing import Optional
 import numpy as np
 import torch
 from numpy.random import Generator
 from torch_geometric.data import Data
-from typing import Optional, Tuple, List
-
+from typing import Optional, List
 
 def _gen_mask(size: tuple, slice: object) -> _Array:
     mask = torch.zeros(size)
@@ -85,7 +84,6 @@ def _to_pyg(
 
     '''
     m, n = A.shape
-    
     x = _gen_node_features(m, n, p, t, rng)
     edge_index, edge_attr = _gen_edge_tensors(A, offline_nodes, t)
     neighbors = _neighbor_encoder(A, offline_nodes, t)
@@ -97,6 +95,8 @@ def _to_pyg(
         edge_attr=edge_attr,
         graph_features=graph_features,
         neighbors=neighbors,
+        m=torch.tensor([m]),
+        n=torch.tensor([n])
     )
 
     if hint is not None:
@@ -210,33 +210,59 @@ def _instances_to_gnn_train_samples(
     return gnn_samples
 
 
-def _instances_to_gnn_eval_state(
+def _instances_to_gnn_eval_states(
     instances: List[_Instance],
-    coin_flips: _Array,
+    num_realizations: int,
     rng: Generator
 ):
     num_instances = len(instances)
-    _, n = instances[0][0].shape
-    init_offline = frozenset(np.arange(n))
 
-    state = {
-        'offline_nodes': fill_list(init_offline, num_instances),
-        'matchings': fill_list([], num_instances),
-        'values':  fill_list(0, num_instances),
-        'As': [A for (A, _) in instances],
-        'coin_flips': coin_flips,
-        'dataset': [
-            _to_pyg(A, p, init_offline, 0, rng)
-            for (A, p) in instances
+    datasets = [[] for _ in range(num_realizations)]
+    coin_flips = [[] for _ in range(num_realizations)]
+    for (A, p) in instances:
+        for i in range(num_realizations):
+            datasets[i].append(_to_pyg(A, p, frozenset(np.arange(A.shape[1])), 0, rng))
+            coin_flip = _flip_coins(p, rng)
+            coin_flips[i].append(coin_flip)
+
+
+    states = {
+        'data': {
+            'As': [A for (A, _) in instances],
+            'ms': [A.shape[0] for (A, _) in instances],
+            'ns': [A.shape[1] for (A, _) in instances],
+            'ps': [p for (_, p) in instances]
+        },
+        'realizations':
+        [
+            {
+                'offline_nodes': [
+                    frozenset(np.arange(A.shape[1])) for (A, _) in instances
+                ],
+                'matchings': fill_list([], num_instances),
+                'values':  fill_list(0, num_instances),
+            
+                'dataset': datasets[i],#[
+                 #   _to_pyg(A, p, frozenset(np.arange(A.shape[1])), 0, rng)
+                 #   for (A, p) in instances
+                #],
+                'coin_flips': coin_flips[i]#[
+                    #_flip_coins(p, rng) for (_, p) in instances
+            
+                #]
+            }
+            for i in range(num_realizations)
         ]
+
     }
 
-    return state
+    return states
 
 
 def _density(instance: _Instance) -> float:
    A, _ = instance
    return (A > 0).sum() / (A >= 0).sum()
+
 
 def _online_ratio(instance: _Instance) -> float:
     A, _ = instance
@@ -244,12 +270,16 @@ def _online_ratio(instance: _Instance) -> float:
     return m / n
 
 
-def _degree_quantiles(instance: _Instance) -> List[float]:
-    A, _ = instance
+def _exp_off_degree_quantiles(instance: _Instance) -> List[float]:
+    A, p = instance
     return np.quantile(
-        (A > 0).sum(axis=0) / A.shape[0],
+        ((A > 0).T @ p) / A.shape[0],
         [0, 0.25, 0.5, 0.75, 1]
     )
+
+
+def _test(instance: _Instance) -> List[float]:
+    return np.diff(_exp_off_degree_quantiles(instance))
 
 
 def _edge_quantiles(instance: _Instance) -> List[float]:
@@ -259,17 +289,24 @@ def _edge_quantiles(instance: _Instance) -> List[float]:
         [0, 0.25, 0.5, 0.75, 1]
     )
 
-def _prob_quantiles(instance: _Instance) -> List[float]:
-    _, p = instance
-    return np.quantile(
-        p,
-        [0, 0.25, 0.5, 0.75, 1]
-    )
+
+def _expected_online_ratio(instance: _Instance) -> float:
+    A, p = instance
+    n = A.shape[1]
+    return p.sum() / n
 
 
 def _featurize(instance: _Instance) -> _Array:
-    SCAL_FEAT_FNS = [_online_ratio, _density]
-    VEC_FEAT_FNS = [_edge_quantiles, _degree_quantiles, _prob_quantiles]
+    SCAL_FEAT_FNS = [
+        _online_ratio,
+        _expected_online_ratio,
+        _density
+    ]
+    VEC_FEAT_FNS = [
+        _edge_quantiles,
+        _exp_off_degree_quantiles,
+        _test
+    ]
 
     embedding = [
         *[func(instance) for func in SCAL_FEAT_FNS],
@@ -284,7 +321,6 @@ def _2d_normalize(arr: _Array):
 
 def _instances_to_nn_samples(
         instances: List[_Instance],
-        coin_flips: _Array,
         models: List[object],
         args: dict,
         batch_size: int,
@@ -296,17 +332,19 @@ def _instances_to_nn_samples(
     X = np.vstack([_featurize(instance) for instance in instances])
     y = []
     for model in models:
-        (model_ratio, greedy_ratio), _ = evaluate_model(
-            model,
-            args,
-            instances,
-            coin_flips,
-            batch_size,
-            rng
+        model_ratio, greedy_ratio = evaluate_model(
+            classify_model=None,
+            eval_models=[model],
+            args=args,
+            instances=instances,
+            batch_size=batch_size,
+            rng=rng,
+            num_realizations=10
         )
         y.append(model_ratio)
     y.append(greedy_ratio)
     y = np.array(y).T
+
     return X, _2d_normalize(y)
 
 
