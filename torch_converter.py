@@ -1,12 +1,12 @@
 from params import _Array, _Instance
 from algorithms import one_step_stochastic_opt, cache_stochastic_opt
-from util import _extract_edges, diff, _neighbors, fill_list, _flip_coins
-from typing import Optional
+from util import diff, _neighbors
 import numpy as np
 import torch
 from numpy.random import Generator
 from torch_geometric.data import Data
-from typing import Optional, List
+from typing import List, Tuple
+from copy import deepcopy
 
 def _gen_mask(size: tuple, slice: object) -> _Array:
     mask = torch.zeros(size)
@@ -48,15 +48,33 @@ def _gen_node_features(m: int, n: int, p: _Array, t: int, rng: Generator):
     ).T.type(torch.FloatTensor)
 
 
-def _gen_edge_tensors(A, offline_nodes, t):
-    edge_index, edge_attr = _extract_edges(A, offline_nodes, t)
+def _gen_edge_tensors(A: _Array) -> Tuple[torch.tensor, torch.tensor]:
+    m, n = A.shape
+    edge_index = []; edge_attr = []
+
+    # Add edges/edge weights in underlying graph
+    for i in range(m):
+        for j in range(n):
+            if A[i, j] > 0:
+                edge_index.append([j, n + i])
+                edge_index.append([n + i, j])
+                edge_attr.append([A[i, j]])
+                edge_attr.append([A[i, j]])
+    
+    # Add edges to virtual node representing no match
+    for i in range(0, m):
+        edge_index.append([n + m, n + i])
+        edge_index.append([n + i, n + m])
+        edge_attr.append([0])
+        edge_attr.append([0])
+
     edge_index = torch.tensor(edge_index).T
     edge_attr = torch.tensor(edge_attr).type(torch.FloatTensor)
     return edge_index, edge_attr
 
 
 def _gen_graph_features(m, n, offline_nodes, t):
-    ratio = torch.tensor([len(offline_nodes) / (m - t)] * (n + m + 1))
+    ratio = torch.tensor([(m - t) / len(offline_nodes)] * (n + m + 1))
     t = torch.tensor([t] * (n + m + 1))
 
     return torch.stack(
@@ -67,29 +85,25 @@ def _gen_graph_features(m, n, offline_nodes, t):
     ).type(torch.FloatTensor)
     
 
-def _to_pyg(
-    A: _Array,
-    p: _Array,
-    offline_nodes: frozenset,
-    t: int,
-    rng: Generator,
-    hint: Optional[_Array] = None
-):
+def init_pyg(
+    instance: _Instance,
+    rng: Generator
+) -> Data:
     '''
-    Generates a data sample. [A] is the adjacency matrix consisting of
-    unmatched offline nodes and online nodes which have not already been
-    seen. For each of these online nodes, [p] gives the node's arrival
-    probability (first entry is always 1 and corresponds to arriving
-    online node.
-
+    Initializes a PyG data object representing the problem instance (A, p).
     '''
+    A, p = instance
     m, n = A.shape
+
+    offline_nodes = frozenset(np.arange(n))
+    t = 0
+
     x = _gen_node_features(m, n, p, t, rng)
-    edge_index, edge_attr = _gen_edge_tensors(A, offline_nodes, t)
+    edge_index, edge_attr = _gen_edge_tensors(A)
     neighbors = _neighbor_encoder(A, offline_nodes, t)
     graph_features = _gen_graph_features(m, n, offline_nodes, t)
 
-    instance = Data(
+    return Data(
         x=x,
         edge_index=edge_index,
         edge_attr=edge_attr,
@@ -99,13 +113,15 @@ def _to_pyg(
         n=torch.tensor([n])
     )
 
-    if hint is not None:
-        instance.hint = torch.FloatTensor(hint)
 
-    return instance
-
-
-def _update_pyg(data: Data, t: int, choice: int, A: _Array, offline_nodes: frozenset):
+def update_pyg(
+    data: Data,
+    instance: _Instance,
+    choice: int,
+    t: int,
+    offline_nodes: frozenset
+) -> None:
+    A, _ = instance
     m, n = A.shape
     def _filter_choice_edges(edge_index, edge_attr):
         mask = ((edge_index != choice) & (edge_index != n + t - 1)).all(dim=0)
@@ -128,8 +144,15 @@ def _update_pyg(data: Data, t: int, choice: int, A: _Array, offline_nodes: froze
         data.neighbors = _neighbor_encoder(A, offline_nodes, t)
     
     def _update_graph_features():
+        num_offline = len(offline_nodes)
         data.graph_features[0] = data.graph_features[0] + 1
-        data.graph_features[1] = data.graph_features[1] * (m - t) / (m - t + 1)
+        if num_offline == 0:
+            data.graph_features[1] = torch.full(
+                data.graph_features[1].size(),
+                fill_value=-1
+        )
+        else:
+            data.graph_features[1] = (m - t - 1) / num_offline
 
     _update_node_features()
     _update_edges()
@@ -137,126 +160,9 @@ def _update_pyg(data: Data, t: int, choice: int, A: _Array, offline_nodes: froze
     _update_neighbors()
 
 
-def _marginal_vtg(A, p, offline_nodes, t, cache, rng, **kwargs):
-    hint = one_step_stochastic_opt(
-        A, offline_nodes, t, cache
-    )
-    hint = hint - hint[-1]
-    return _to_pyg(A, p, offline_nodes, t, rng, hint)
-
-
-def _skip_class(A, p, offline_nodes, t, cache, rng, **kwargs):
-    hint = one_step_stochastic_opt(
-        A, offline_nodes, t, cache
-    )
-    hint = [1 * (np.argmax(hint) == len(hint) - 1)]
-    return _to_pyg(A, p, offline_nodes, t, rng, hint)
-
-
-INSTANCE_GEN_FUNCS = {
-    'regression': _marginal_vtg,
-    'classification': _skip_class
-}
-
-
-def _instance_to_gnn_sample_path(
-    instance: _Instance,
-    head: str,
-    cache: dict,
-    rng: Generator,
-    **kwargs: dict
-):
-    sample_path = []
-    A, p = instance
-    m, n = A.shape
-
-    offline_nodes = frozenset(np.arange(n))
-    matched_nodes = set()
-
-    for t in range(m):
-        graph = INSTANCE_GEN_FUNCS[head](
-            A,
-            p,
-            offline_nodes,
-            t,
-            cache,
-            rng,
-            **kwargs 
-        )
-        sample_path.append(graph)
-        choice = cache[t][offline_nodes][1]
-        if choice != -1:
-            matched_nodes.add(choice)
-            matched_nodes.add(n + t)
-
-        offline_nodes = diff(offline_nodes, choice)
-
-    return sample_path
-
-
-def _instances_to_gnn_train_samples(
-    instances: List[_Instance],
-    head: str
-) -> list:
-    
-    gnn_samples = []
-    rng = np.random.default_rng()
-
-    for instance in instances:
-        cache = cache_stochastic_opt(*instance)
-        gnn_samples.extend(
-            _instance_to_gnn_sample_path(instance, head, cache, rng)
-        )
-    return gnn_samples
-
-
-def _instances_to_gnn_eval_states(
-    instances: List[_Instance],
-    num_realizations: int,
-    rng: Generator
-):
-    num_instances = len(instances)
-
-    datasets = [[] for _ in range(num_realizations)]
-    coin_flips = [[] for _ in range(num_realizations)]
-    for (A, p) in instances:
-        for i in range(num_realizations):
-            datasets[i].append(_to_pyg(A, p, frozenset(np.arange(A.shape[1])), 0, rng))
-            coin_flip = _flip_coins(p, rng)
-            coin_flips[i].append(coin_flip)
-
-
-    states = {
-        'data': {
-            'As': [A for (A, _) in instances],
-            'ms': [A.shape[0] for (A, _) in instances],
-            'ns': [A.shape[1] for (A, _) in instances],
-            'ps': [p for (_, p) in instances]
-        },
-        'realizations':
-        [
-            {
-                'offline_nodes': [
-                    frozenset(np.arange(A.shape[1])) for (A, _) in instances
-                ],
-                'matchings': fill_list([], num_instances),
-                'values':  fill_list(0, num_instances),
-            
-                'dataset': datasets[i],#[
-                 #   _to_pyg(A, p, frozenset(np.arange(A.shape[1])), 0, rng)
-                 #   for (A, p) in instances
-                #],
-                'coin_flips': coin_flips[i]#[
-                    #_flip_coins(p, rng) for (_, p) in instances
-            
-                #]
-            }
-            for i in range(num_realizations)
-        ]
-
-    }
-
-    return states
+def label_pyg(data: Data, y: _Array) -> Data:
+    data.hint = torch.FloatTensor(y)
+    return deepcopy(data)
 
 
 def _density(instance: _Instance) -> float:
@@ -270,20 +176,28 @@ def _online_ratio(instance: _Instance) -> float:
     return m / n
 
 
-def _exp_off_degree_quantiles(instance: _Instance) -> List[float]:
+def _exp_clustering_coef_quantiles(
+    instance: _Instance,
+    threshold: float
+) -> List[float]:
     A, p = instance
     return np.quantile(
-        ((A > 0).T @ p) / A.shape[0],
-        [0, 0.25, 0.5, 0.75, 1]
+        ((A > threshold).T @ p) / p.sum(),
+        [0, 1]
     )
 
 
-def _test(instance: _Instance) -> List[float]:
-    return np.diff(_exp_off_degree_quantiles(instance))
+def _exp_graph_clustering_coef(
+    instance: _Instance,
+    threshold: float
+) -> List[float]:
+    A, p = instance
+    return np.mean((A >= threshold).T @ p / p.sum())
 
 
 def _edge_quantiles(instance: _Instance) -> List[float]:
     A, _ = instance
+ 
     return np.quantile(
         A[A > 0].flatten(),
         [0, 0.25, 0.5, 0.75, 1]
@@ -298,25 +212,195 @@ def _expected_online_ratio(instance: _Instance) -> float:
 
 def _featurize(instance: _Instance) -> _Array:
     SCAL_FEAT_FNS = [
-        _online_ratio,
-        _expected_online_ratio,
-        _density
+        (_online_ratio, [[]]),
+        (_expected_online_ratio, [[]]),
+        (_exp_graph_clustering_coef, [[0], [0.2], [0.4], [0.6], [0.8]]),
+        (_density, [[]])
     ]
     VEC_FEAT_FNS = [
-        _edge_quantiles,
-        _exp_off_degree_quantiles,
-        _test
+        (_edge_quantiles, [[]]),
+        (_exp_clustering_coef_quantiles, [[0], [0.2], [0.4], [0.6], [0.8]])
     ]
 
     embedding = [
-        *[func(instance) for func in SCAL_FEAT_FNS],
-        *[el for func in VEC_FEAT_FNS for el in func(instance)]
+        *[
+            func(instance, *kwargs)
+            for (func, kwarg_list) in SCAL_FEAT_FNS
+            for kwargs in kwarg_list
+        ],
+        *[
+            el
+            for (func, kwarg_list) in VEC_FEAT_FNS
+            for kwargs in kwarg_list
+            for el in func(instance, *kwargs)
+        ]
     ]
 
     return np.array(embedding)
 
+
+def init_features(instance: _Instance, rng: Generator) -> Data:
+    return Data(X=_featurize(instance))
+
+
+def update_features(
+    data: Data,
+    instance: _Instance,
+    choice: int,
+    t: int,
+    offline_nodes: frozenset
+) -> None:
+    
+    A, p = instance
+    # Filter used offline nodes, online nodes that have arrived
+    p_new = p[t:]
+    A_new = A[t:, :]
+    mask = [i in offline_nodes for i in np.arange(A.shape[1])]
+    A_new = A_new[:, mask] 
+    data = Data(X=_featurize((A_new, p_new)))
+
+
+def label_features(data: Data, y: _Array) -> None:
+    data.y = y
+
+
 def _2d_normalize(arr: _Array):
     return (arr - arr.mean()) / arr.std()
+
+
+def _marginal_vtg(instance, offline_nodes, t, cache, **kwargs):
+    A, _ = instance
+    hint = one_step_stochastic_opt(
+        A, offline_nodes, t, cache
+    )
+    return hint - hint[-1]
+
+
+def _skip_class(instance, offline_nodes, t, cache, **kwargs):
+    A, _ = instance
+    hint = one_step_stochastic_opt(
+        A, offline_nodes, t, cache
+    )
+    return [1 * (np.argmax(hint) == len(hint) - 1)]
+
+
+def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
+
+    A, _ = instance
+    hint = one_step_stochastic_opt(
+        A, offline_nodes, t, cache
+    )
+    device = kwargs['device']
+    data = kwargs['data']
+    data.to(device)
+    models = kwargs['models']
+
+    choices = [
+        torch.argmax(model(data)[data.neighbors]).item()
+        for model in models
+    ]
+
+    data.to('cpu')
+    vtgs = hint[choices] 
+    
+    if vtgs[0] > vtgs[1]:
+        return [0]
+    else:
+        return [1]
+
+
+LABEL_FUNCS = {
+    'regression': _marginal_vtg,
+    'classification': _skip_class,
+    'meta': _meta_ratios
+}
+
+SAMPLE_INIT_FUNCS = {
+    'gnn': init_pyg,
+    'nn': init_features
+}
+
+SAMPLE_UPDATE_FUNCS = {
+    'gnn': update_pyg,
+    'nn': update_features
+}
+
+SAMPLE_LABEL_FUNCS = {
+    'gnn': label_pyg,
+    'nn': label_features
+}
+
+def _instance_to_sample_path(
+    instance: _Instance,
+    sample_type: str,
+    label_fn: callable,
+    cache: dict,
+    rng: Generator,
+    **kwargs
+):
+    A, _ = instance
+    m, n = A.shape
+
+    # Initialize data at start of sample path
+    data = SAMPLE_INIT_FUNCS[sample_type](instance, rng)
+    sample_path = []
+    offline_nodes = frozenset(np.arange(n))
+    kwargs['data'] = data
+    
+    for t in range(m):
+        if len(offline_nodes) > 0:
+            # Generate labels for current execution state
+            labels = label_fn(
+                instance,
+                offline_nodes,
+                t,
+                cache,
+                **kwargs
+            )
+
+            # Label data, add to sample path
+            labeled_sample = SAMPLE_LABEL_FUNCS[sample_type](data, labels)
+            sample_path.append(labeled_sample)
+
+            # Update state / data
+            choice = cache[t][offline_nodes][1]
+            offline_nodes = diff(offline_nodes, choice)
+
+            if t < m - 1:
+                SAMPLE_UPDATE_FUNCS[sample_type](
+                    data,
+                    instance,
+                    choice,
+                    t + 1, 
+                    offline_nodes
+                )
+
+    return sample_path
+
+        
+def _instances_to_gnn_train_samples(
+    instances: List[_Instance],
+    head: str,
+    **kwargs
+) -> list:
+    
+    gnn_samples = []
+    rng = np.random.default_rng()
+    label_fn = LABEL_FUNCS[head]
+
+    for instance in instances:
+        cache = cache_stochastic_opt(*instance)
+        gnn_samples.extend(
+            _instance_to_sample_path(
+                instance,
+                "gnn",
+                label_fn,
+                cache,
+                rng,
+                **kwargs
+            )
+        )
+    return gnn_samples
 
 
 def _instances_to_nn_samples(
@@ -330,22 +414,25 @@ def _instances_to_nn_samples(
     from evaluate import evaluate_model
 
     X = np.vstack([_featurize(instance) for instance in instances])
-    y = []
+    labels = []
     for model in models:
         model_ratio, greedy_ratio = evaluate_model(
             classify_model=None,
             eval_models=[model],
-            args=args,
+            device=args['device'],
             instances=instances,
             batch_size=batch_size,
             rng=rng,
             num_realizations=10
         )
-        y.append(model_ratio)
-    y.append(greedy_ratio)
-    y = np.array(y).T
+        labels.append(model_ratio)
+    labels.append(greedy_ratio)
+    labels = np.array(labels).T
 
-    return X, _2d_normalize(y)
+    y = np.zeros(labels.shape)
+    y[np.arange(y.shape[0]), np.argmax(labels, axis=1)] = 1
+
+    return X, y
 
 
 def _instances_to_nn_eval(instances: List[_Instance]):

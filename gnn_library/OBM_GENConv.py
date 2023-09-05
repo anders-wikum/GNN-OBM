@@ -59,12 +59,13 @@ class OBM_GENConv(torch.nn.Module):
         for conv in self.convs:
             conv.reset_parameters()
         self.regression_head.reset_parameters()
-        self.pool.reset_parameters()
+        if self.classify:
+            self.classification_head.reset_parameters()
 
     def forward(self, batch):
         x, edge_index, edge_attr, batch, num_graphs, graph_features = \
             _extract_batch(batch)
-        
+
         for i in range(self.num_layers):
             x = self.convs[i](x, edge_index, edge_attr)
             x = F.relu(x)
@@ -80,11 +81,11 @@ class OBM_GENConv(torch.nn.Module):
                 ).unbind(dim=0), 
                 dim=1
             )
-            x = torch.hstack((x, graph_features.T))
-
+            
+        x = torch.hstack((x, graph_features.T))
+        x = self.regression_head(x)
+        
         if self.classify:
-            x = x.view(num_graphs, num_nodes, -1)[:, -1, :].flatten()
-        else:
-            x = self.regression_head(x)
+            x = x.view(num_graphs, num_nodes, -1)[:, -1, :].flatten()       
 
         return x

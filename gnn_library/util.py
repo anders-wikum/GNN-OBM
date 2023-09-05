@@ -31,6 +31,7 @@ class MaskedMSELoss(nn.Module):
         value_to_go = batch.hint
         neighbor_mask = batch.neighbors
         preds = pred[neighbor_mask].squeeze(dim=1)
+        # print(preds.size(), value_to_go.size())
         return F.mse_loss(preds, value_to_go)
 
 
@@ -40,10 +41,9 @@ class pygCrossEntropyLoss(nn.Module):
         super(pygCrossEntropyLoss, self).__init__()
 
     def forward(self, pred, batch):
-        return F.cross_entropy(
+        return F.binary_cross_entropy_with_logits(
             pred,
-            batch.label,
-            batch.weight
+            batch.hint
         )
     
 
@@ -54,8 +54,7 @@ class torchCrossEntropyLoss(nn.Module):
 
     def forward(self, pred, batch):
         (_, y) = batch
-        #print(pred.cpu().detach().numpy())
-        return F.mse_loss(pred, y)
+        return F.binary_cross_entropy_with_logits(pred, y)
 
 
 def build_optimizer(args, params):
@@ -95,20 +94,23 @@ def _get_loss(args):
     elif args.head == 'classification':
         return pygCrossEntropyLoss()
     elif args.head == 'meta':
-        return torchCrossEntropyLoss()
+        if args.processor == 'NN':
+            return torchCrossEntropyLoss()
+        else:
+            return pygCrossEntropyLoss()
     else:
         raise NotImplemented
     
 
 def _get_model(args: dict):
     model = NETWORKS[args.processor](args)
-    model.to(args.device)
     return model
 
 
 def train(train_loader, test_loader, args):
     args = objectview(args)
     model = _get_model(args)
+    model.to(args.device)
     loss_fn = _get_loss(args)
     _, opt = build_optimizer(args, model.parameters())
 
@@ -130,7 +132,7 @@ def _train(
         test_loader: DataLoader,
         epochs: int,
         opt: optim.Optimizer,
-        device: SyntaxError
+        device: str
         ):
     """
     Trains a GNN model, periodically testing it and accumulating loss values
@@ -210,11 +212,13 @@ def save(model: object, args: dict, name: str) -> None:
     pickle.dump(filtered_args, open(path + '_args.pickle', 'wb'))
 
 
-def load(name: str) -> object:
+def load(name: str, device: str) -> object:
     path = MODEL_SAVE_FOLDER + name
     args = pickle.load(open(path + '_args.pickle', 'rb'))
+    args['device'] = device
     args = objectview(args)
     model = _get_model(args)
-    model.load_state_dict(torch.load(path))
+    model.load_state_dict(torch.load(path, map_location='cpu'))
+    model.to(device)
     model.eval()
     return model, args
