@@ -64,7 +64,7 @@ class GraphClassifier(torch.nn.Module):
         (x, _) = batch
         for i in range(self.num_layers):
             x = self.mods[i](x)
-            x = F.leaky_relu(x)
+            x = F.relu(x)
             x = F.dropout(x, self.dropout, self.training)
         x = self.mods[-1](x)
         return x

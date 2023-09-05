@@ -5,7 +5,8 @@ import torch_converter as pc
 import algorithms as dp
 import numpy as np
 from torch_geometric.loader import DataLoader
-from util import Dataset, diff, objectview, fill_list, _flip_coins
+from util import Dataset, diff, fill_list, _flip_coins
+import torch.nn.functional as F
 
 from typing import Optional
 from numpy.random import Generator
@@ -20,11 +21,11 @@ class StateRealization:
         self.value = 0
         self.matching = []
         self.offline_nodes = frozenset(np.arange(A.shape[1]))
-        self.dataset = pc._to_pyg(A, p, self.offline_nodes, 0, rng)
+        self.dataset = pc.init_pyg(instance, rng)
         self.coin_flips = _flip_coins(p, rng)
 
-    def update(self, choice: int, t: int, A: _Array):
-
+    def update(self, instance, choice: int, t: int):
+        A, _ = instance
         # If we don't skip, update state
         if choice != -1:
             self.matching.append((t, choice))
@@ -33,11 +34,11 @@ class StateRealization:
 
         # If still in a relevant timestep, update dataset
         if t < A.shape[0] - 1:
-            pc._update_pyg(
+            pc.update_pyg(
                 self.dataset,
-                t + 1,
+                instance,
                 choice,
-                A,
+                t + 1,
                 self.offline_nodes
             )
 
@@ -116,8 +117,53 @@ class ParallelExecutionState:
             pin_memory=True
         )
     
+    def heuristic_model_assign(self, classify_model):
+        online_offline_ratios = np.array([
+            realized_state.dataset.graph_features[1, 1].item()
+            for execution_state in self.execution_states
+            for realized_state in execution_state.state_realizations
+        ])
+        if classify_model is None:
+            return np.zeros(len(online_offline_ratios)).astype(int)
+        return (online_offline_ratios < 1.5).astype(int)
+    
+    def gnn_model_assign(
+        self,
+        classify_model: object,
+        batch_size: int,
+        device: str
+    ):
+        data = Dataset([
+            realized_state.dataset
+            for execution_state in self.execution_states
+            for realized_state in execution_state.state_realizations
+        ])
 
-    def model_assign(
+        if classify_model is None:
+            return np.zeros(self.num_instances * self.num_realizations).astype(int)
+
+        data_loader = DataLoader(
+            data,
+            batch_size=batch_size,
+            shuffle=False,
+            pin_memory=True
+        )
+
+        with torch.no_grad():
+            preds = []
+            for batch in data_loader:
+                batch.to(device)
+                pred = F.sigmoid(classify_model(batch))
+                preds.append(pred)
+            preds = torch.cat(preds)
+        return torch.round(preds) \
+            .cpu() \
+            .numpy() \
+            .astype(int)
+
+
+
+    def nn_model_assign(
         self,
         classify_model: object,
         device: str
@@ -151,15 +197,15 @@ class ParallelExecutionState:
                 arrival_index = 0
                 for (i, j) in model_arrivals:
                     choice = choices[model_index][arrival_index].item()
-                    A = self.execution_states[i].A
+                    instance = (self.execution_states[i].A, self.execution_states[i].p)
                     state = self.execution_states[i].state_realizations[j]
-                    state.update(choice, t, A)
+                    state.update(instance, choice, t)
                     arrival_index += 1
         
         for (i, j) in non_arrival_indices:
             state = self.execution_states[i].state_realizations[j]
-            A = self.execution_states[i].A
-            state.update(-1, t, A)
+            instance = (self.execution_states[i].A, self.execution_states[i].p)
+            state.update(instance, -1, t)
 
 
     def compute_competitive_ratios(self):
@@ -228,7 +274,7 @@ def _compute_eval_model_predictions(
     arrival_indices,
     parallel_state: ParallelExecutionState,
     batch_size: int,
-    args: dict
+    device: str
 ) -> List[torch.Tensor]:
     
     choices = []
@@ -246,18 +292,16 @@ def _compute_eval_model_predictions(
             with torch.no_grad():
                 model_choices = []
                 for batch in model_batches:
-                    batch.to(args.device)
+                    batch.to(device)
                     pred = model(batch)
                     model_choices.append(
-                        EVALUATORS[args.head](
+                        EVALUATORS["meta"](
                             pred=pred,
                             batch=batch
                         )
                     )
                 model_choices = torch.cat(model_choices)
-                #print(j, model_choices)
         choices.append(model_choices)
-    
 
     return choices
 
@@ -280,7 +324,7 @@ def _execute_greedy(
 def evaluate_model(
     classify_model: object,
     eval_models: List[object],
-    args: dict,
+    device: str,
     instances: List[_Instance],
     batch_size: int,
     rng: Generator,
@@ -296,17 +340,22 @@ def evaluate_model(
     )
 
     # ===================================================================== #
-    if type(args) is dict:
-        args = objectview(args)
-    device = args.device
     num_models = len(eval_models) + 1
 
-    model_assignment = parallel_state.model_assign(
-        classify_model,
-        device
-    )
+    # model_assignment = parallel_state.model_assign(
+    #     classify_model,
+    #     device
+    # )
 
     for t in range(parallel_state.max_online_nodes):
+        model_assignment = parallel_state.nn_model_assign(classify_model, device)
+        # model_assignment = parallel_state.heuristic_model_assign(classify_model)
+        # model_assignment = parallel_state.gnn_model_assign(
+        #     classify_model,
+        #     batch_size,
+        #     device
+        # )
+
         non_arrival_indices, arrival_indices = parallel_state.get_arrivals(
             t,
             model_assignment,
@@ -318,7 +367,7 @@ def evaluate_model(
             arrival_indices,
             parallel_state,
             batch_size,
-            args
+            device
         )
 
         parallel_state.update(t, choices, non_arrival_indices, arrival_indices)

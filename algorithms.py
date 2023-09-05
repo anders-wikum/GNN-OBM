@@ -101,7 +101,6 @@ def stochastic_opt(
 
     return matching, value
 
-
 def greedy(
     A: _Array,
     coin_flips: _Array,
