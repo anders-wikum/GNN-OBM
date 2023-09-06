@@ -117,29 +117,31 @@ class ParallelExecutionState:
             pin_memory=True
         )
     
-    def heuristic_model_assign(self, classify_model):
+    def _heuristic_model_assign(self, meta_model):
         online_offline_ratios = np.array([
             realized_state.dataset.graph_features[1, 1].item()
             for execution_state in self.execution_states
             for realized_state in execution_state.state_realizations
         ])
-        if classify_model is None:
+        if meta_model is None:
             return np.zeros(len(online_offline_ratios)).astype(int)
         return (online_offline_ratios < 1.5).astype(int)
     
-    def gnn_model_assign(
+
+    def _gnn_model_assign(
         self,
-        classify_model: object,
-        batch_size: int,
-        device: str
+        meta_model: object,
+        batch_size: int
     ):
+        
+        device = next(meta_model.parameters()).device
         data = Dataset([
             realized_state.dataset
             for execution_state in self.execution_states
             for realized_state in execution_state.state_realizations
         ])
 
-        if classify_model is None:
+        if meta_model is None:
             return np.zeros(self.num_instances * self.num_realizations).astype(int)
 
         data_loader = DataLoader(
@@ -153,7 +155,7 @@ class ParallelExecutionState:
             preds = []
             for batch in data_loader:
                 batch.to(device)
-                pred = F.sigmoid(classify_model(batch))
+                pred = F.sigmoid(meta_model(batch))
                 preds.append(pred)
             preds = torch.cat(preds)
         return torch.round(preds) \
@@ -163,26 +165,40 @@ class ParallelExecutionState:
 
 
 
-    def nn_model_assign(
+    def _nn_model_assign(
         self,
-        classify_model: object,
-        device: str
+        meta_model: object
     ):
+        
+        device = next(meta_model.parameters()).device
         instances = [
             (execution_state.A, execution_state.p)
             for execution_state in self.execution_states
         ]
 
-        if classify_model is None:
+        if meta_model is None:
             return np.zeros(len(instances)).astype(int)
         
         else:
             X = pc._instances_to_nn_eval(instances).to(device)
             with torch.no_grad():
-                return _select_eval_model(classify_model, (X, None)) \
+                return _select_base_model(meta_model, (X, None)) \
                     .cpu() \
                     .numpy() \
                     .astype(int)
+            
+    def _model_assign(
+        self,
+        meta_model: object,
+        meta_model_type: str,
+        batch_size: Optional[int] = None
+    ):
+        if meta_model_type == 'gnn':
+            return self._gnn_model_assign(meta_model, batch_size)
+        elif meta_model_type == 'nn':
+            return self._nn_model_assign(meta_model)
+        else:
+            return self._heuristic_model_assign(meta_model)
             
 
     def update(
@@ -234,9 +250,9 @@ class ParallelExecutionState:
         )
 
 
-def _select_eval_model(classify_model, data) -> object:
+def _select_base_model(meta_model, data) -> object:
     with torch.no_grad():
-        y = classify_model(data)
+        y = meta_model(data)
         return torch.argmax(y, dim=1)
     
 
@@ -269,16 +285,17 @@ EVALUATORS = {
 }
 
 
-def _compute_eval_model_predictions(
-    eval_models: List[object],
+def _compute_base_model_predictions(
+    base_models: List[object],
     arrival_indices,
     parallel_state: ParallelExecutionState,
-    batch_size: int,
-    device: str
+    batch_size: int
 ) -> List[torch.Tensor]:
     
+    device = next(base_models[0].parameters()).device
+
     choices = []
-    for j, model in enumerate(eval_models):
+    for j, model in enumerate(base_models):
         model_arrival_indices = arrival_indices[j]
         
         if len(model_arrival_indices) == 0:
@@ -322,9 +339,9 @@ def _execute_greedy(
 
 
 def evaluate_model(
-    classify_model: object,
-    eval_models: List[object],
-    device: str,
+    meta_model: object,
+    meta_model_type: str,
+    base_models: List[object],
     instances: List[_Instance],
     batch_size: int,
     rng: Generator,
@@ -340,7 +357,7 @@ def evaluate_model(
     )
 
     # ===================================================================== #
-    num_models = len(eval_models) + 1
+    num_models = len(base_models) + 1
 
     # model_assignment = parallel_state.model_assign(
     #     classify_model,
@@ -348,13 +365,11 @@ def evaluate_model(
     # )
 
     for t in range(parallel_state.max_online_nodes):
-        model_assignment = parallel_state.nn_model_assign(classify_model, device)
-        # model_assignment = parallel_state.heuristic_model_assign(classify_model)
-        # model_assignment = parallel_state.gnn_model_assign(
-        #     classify_model,
-        #     batch_size,
-        #     device
-        # )
+        model_assignment = parallel_state._model_assign(
+            meta_model,
+            meta_model_type,
+            batch_size
+        )
 
         non_arrival_indices, arrival_indices = parallel_state.get_arrivals(
             t,
@@ -362,12 +377,11 @@ def evaluate_model(
             num_models
         )
 
-        choices = _compute_eval_model_predictions(
-            eval_models,
+        choices = _compute_base_model_predictions(
+            base_models,
             arrival_indices,
             parallel_state,
-            batch_size,
-            device
+            batch_size
         )
 
         parallel_state.update(t, choices, non_arrival_indices, arrival_indices)

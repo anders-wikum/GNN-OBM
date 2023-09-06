@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from numpy.random import Generator
 from torch_geometric.data import Data
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from copy import deepcopy
 
 def _gen_mask(size: tuple, slice: object) -> _Array:
@@ -181,6 +181,9 @@ def _exp_clustering_coef_quantiles(
     threshold: float
 ) -> List[float]:
     A, p = instance
+    if np.all(A == 0):
+        return np.array([0] * 2)
+    
     return np.quantile(
         ((A > threshold).T @ p) / p.sum(),
         [0, 1]
@@ -192,12 +195,17 @@ def _exp_graph_clustering_coef(
     threshold: float
 ) -> List[float]:
     A, p = instance
+    if np.all(A == 0):
+        return 0
+
     return np.mean((A >= threshold).T @ p / p.sum())
 
 
 def _edge_quantiles(instance: _Instance) -> List[float]:
     A, _ = instance
- 
+    if np.all(A == 0):
+        return np.array([0] * 5)
+    
     return np.quantile(
         A[A > 0].flatten(),
         [0, 0.25, 0.5, 0.75, 1]
@@ -262,6 +270,7 @@ def update_features(
 
 def label_features(data: Data, y: _Array) -> None:
     data.y = y
+    return deepcopy(data)
 
 
 def _2d_normalize(arr: _Array):
@@ -290,10 +299,10 @@ def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
     hint = one_step_stochastic_opt(
         A, offline_nodes, t, cache
     )
-    device = kwargs['device']
+    models = kwargs['models']
+    device = next(models[0].parameters()).device
     data = kwargs['data']
     data.to(device)
-    models = kwargs['models']
 
     choices = [
         torch.argmax(model(data)[data.neighbors]).item()
@@ -332,20 +341,26 @@ SAMPLE_LABEL_FUNCS = {
 
 def _instance_to_sample_path(
     instance: _Instance,
-    sample_type: str,
     label_fn: callable,
     cache: dict,
     rng: Generator,
-    **kwargs
+    meta_net_type: str | None,
+    base_models: List[object] | None,
+    
 ):
     A, _ = instance
     m, n = A.shape
 
     # Initialize data at start of sample path
-    data = SAMPLE_INIT_FUNCS[sample_type](instance, rng)
+    pyg_graph = SAMPLE_INIT_FUNCS['gnn'](instance, rng)
+    if base_models is None or meta_net_type == 'gnn':
+        sample_data = pyg_graph
+    else:
+        sample_data = SAMPLE_INIT_FUNCS[meta_net_type](instance, rng)
+
     sample_path = []
     offline_nodes = frozenset(np.arange(n))
-    kwargs['data'] = data
+    kwargs = {'data': pyg_graph, 'models': base_models}
     
     for t in range(m):
         if len(offline_nodes) > 0:
@@ -358,81 +373,116 @@ def _instance_to_sample_path(
                 **kwargs
             )
 
+           
             # Label data, add to sample path
-            labeled_sample = SAMPLE_LABEL_FUNCS[sample_type](data, labels)
+            labeled_sample = \
+                SAMPLE_LABEL_FUNCS[meta_net_type](sample_data, labels)
             sample_path.append(labeled_sample)
 
+       
             # Update state / data
             choice = cache[t][offline_nodes][1]
             offline_nodes = diff(offline_nodes, choice)
 
-            if t < m - 1:
-                SAMPLE_UPDATE_FUNCS[sample_type](
-                    data,
+            if t < m - 1 and len(offline_nodes) > 0:
+                SAMPLE_UPDATE_FUNCS['gnn'](
+                    pyg_graph,
                     instance,
                     choice,
-                    t + 1, 
+                    t + 1,
                     offline_nodes
                 )
+
+                if meta_net_type != 'gnn':
+                    SAMPLE_UPDATE_FUNCS[meta_net_type](
+                        sample_data,
+                        instance,
+                        choice,
+                        t + 1, 
+                        offline_nodes
+                    )
+         
 
     return sample_path
 
         
-def _instances_to_gnn_train_samples(
+def _instances_to_train_samples(
     instances: List[_Instance],
     head: str,
-    **kwargs
+    meta_model_type: Optional[str] = 'gnn',
+    base_models: Optional[List[object]] = None
 ) -> list:
     
-    gnn_samples = []
+    samples = []
     rng = np.random.default_rng()
     label_fn = LABEL_FUNCS[head]
 
     for instance in instances:
         cache = cache_stochastic_opt(*instance)
-        gnn_samples.extend(
+        samples.extend(
             _instance_to_sample_path(
                 instance,
-                "gnn",
                 label_fn,
                 cache,
                 rng,
-                **kwargs
+                meta_model_type,
+                base_models
             )
         )
-    return gnn_samples
+    return samples
 
 
-def _instances_to_nn_samples(
-        instances: List[_Instance],
-        models: List[object],
-        args: dict,
-        batch_size: int,
-        rng: Generator
-    ):
+# def _instances_to_nn_train_samples(
+#     instances: List[_Instance],
+#     head: str,
+#     base_models: Optional[List[object]] = None
+# ):
+#     nn_samples = []
+#     rng = np.random.default_rng()
+#     label_fn = LABEL_FUNCS[head]
 
-    from evaluate import evaluate_model
+#     for instance in instances:
+#         cache = cache_stochastic_opt(*instance)
+#         nn_samples.extend(
+#             _instance_to_sample_path(
+#                 instance,
+#                 label_fn,
+#                 cache,
+#                 rng,
+#                 base_models,
+#                 'nn'
+#             )
+#         )
+# def _instances_to_nn_samples(
+#         instances: List[_Instance],
+#         models: List[object],
+#         args: dict,
+#         batch_size: int,
+#         rng: Generator
+#     ):
 
-    X = np.vstack([_featurize(instance) for instance in instances])
-    labels = []
-    for model in models:
-        model_ratio, greedy_ratio = evaluate_model(
-            classify_model=None,
-            eval_models=[model],
-            device=args['device'],
-            instances=instances,
-            batch_size=batch_size,
-            rng=rng,
-            num_realizations=10
-        )
-        labels.append(model_ratio)
-    labels.append(greedy_ratio)
-    labels = np.array(labels).T
+#     from evaluate import evaluate_model
 
-    y = np.zeros(labels.shape)
-    y[np.arange(y.shape[0]), np.argmax(labels, axis=1)] = 1
+#     X = np.vstack([_featurize(instance) for instance in instances])
+#     labels = []
+#     for model in models:
+#         model_ratio, greedy_ratio = evaluate_model(
+#             classify_model=None,
+#             eval_models=[model],
+#             device=args['device'],
+#             instances=instances,
+#             batch_size=batch_size,
+#             rng=rng,
+#             num_realizations=10
+#         )
+#         labels.append(model_ratio)
+#     labels.append(greedy_ratio)
+#     labels = np.array(labels).T
 
-    return X, y
+#     y = np.zeros(labels.shape)
+#     y[np.arange(y.shape[0]), np.argmax(labels, axis=1)] = 1
+
+#     return X, y
 
 
 def _instances_to_nn_eval(instances: List[_Instance]):

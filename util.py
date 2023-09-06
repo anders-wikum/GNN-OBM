@@ -16,9 +16,15 @@ class Dataset(InMemoryDataset):
         self.data, self.slices = self.collate(data_list)
 
 class NumpyDataset(Dataset):
-    def __init__(self, tup):
-        self.x = torch.FloatTensor(tup[0])
-        self.y = torch.FloatTensor(tup[1])
+    def __init__(self, data_list):
+        X = []
+        y = []
+        for data in data_list:
+            X.append(data.X)
+            y.append(data.y)
+
+        self.x = torch.FloatTensor(np.vstack(X))
+        self.y = torch.FloatTensor(np.vstack(y))
         
     def __getitem__(self, index):
         x = self.x[index]
