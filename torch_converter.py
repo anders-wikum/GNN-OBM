@@ -265,7 +265,7 @@ def update_features(
     A_new = A[t:, :]
     mask = [i in offline_nodes for i in np.arange(A.shape[1])]
     A_new = A_new[:, mask] 
-    data = Data(X=_featurize((A_new, p_new)))
+    data.X = _featurize((A_new, p_new))
 
 
 def label_features(data: Data, y: _Array) -> None:
@@ -300,17 +300,35 @@ def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
         A, offline_nodes, t, cache
     )
     models = kwargs['models']
-    device = next(models[0].parameters()).device
     data = kwargs['data']
-    data.to(device)
 
     choices = [
-        torch.argmax(model(data)[data.neighbors]).item()
-        for model in models
+        selector.select_nodes([data]).item()
+        for selector in models
+    ]
+
+    index_of_choice = {}
+    neighbor_index = 0
+    for i, neighbor in enumerate(data.neighbors):
+        if neighbor:
+            index_of_choice[i] = neighbor_index
+            neighbor_index += 1
+
+    neighor_indices = [
+        index_of_choice.get(choice, len(hint) - 1)
+        for choice in choices
     ]
 
     data.to('cpu')
-    vtgs = hint[choices] 
+    vtgs = hint[neighor_indices]
+    
+    max_index = np.argmax(vtgs)
+    label = np.zeros(len(models))
+    #print(len(vtgs), np.unique(vtgs).shape[0])
+    if len(vtgs) != np.unique(vtgs).shape[0]:
+        return label
+    label[max_index] = 1
+    return label
     
     if vtgs[0] > vtgs[1]:
         return [0]
@@ -357,6 +375,7 @@ def _instance_to_sample_path(
         sample_data = pyg_graph
     else:
         sample_data = SAMPLE_INIT_FUNCS[meta_net_type](instance, rng)
+        base_modes = []
 
     sample_path = []
     offline_nodes = frozenset(np.arange(n))
@@ -432,57 +451,36 @@ def _instances_to_train_samples(
     return samples
 
 
-# def _instances_to_nn_train_samples(
-#     instances: List[_Instance],
-#     head: str,
-#     base_models: Optional[List[object]] = None
-# ):
-#     nn_samples = []
-#     rng = np.random.default_rng()
-#     label_fn = LABEL_FUNCS[head]
+def _instances_to_nn_samples(
+        instances: List[_Instance],
+        base_models: List[object],
+        batch_size: int
+    ):
 
-#     for instance in instances:
-#         cache = cache_stochastic_opt(*instance)
-#         nn_samples.extend(
-#             _instance_to_sample_path(
-#                 instance,
-#                 label_fn,
-#                 cache,
-#                 rng,
-#                 base_models,
-#                 'nn'
-#             )
-#         )
-# def _instances_to_nn_samples(
-#         instances: List[_Instance],
-#         models: List[object],
-#         args: dict,
-#         batch_size: int,
-#         rng: Generator
-#     ):
+    from evaluate import evaluate_model
+    rng = np.random.default_rng()
+    X = [_featurize(instance) for instance in instances]
+    labels = []
+    for model in base_models:
+        model_ratio, greedy_ratio = evaluate_model(
+            meta_model=None,
+            meta_model_type=None,
+            base_models=[model],
+            instances=instances,
+            batch_size=batch_size,
+            rng=rng,
+            num_realizations=10
+        )
+        labels.append(model_ratio)
+    #labels.append(greedy_ratio)
+    labels = np.array(labels).T
 
-#     from evaluate import evaluate_model
+    y = np.zeros(labels.shape)
+    y[np.arange(y.shape[0]), np.argmax(labels, axis=1)] = 1
+    y = [y[i, :] for i in range(y.shape[0])]
 
-#     X = np.vstack([_featurize(instance) for instance in instances])
-#     labels = []
-#     for model in models:
-#         model_ratio, greedy_ratio = evaluate_model(
-#             classify_model=None,
-#             eval_models=[model],
-#             device=args['device'],
-#             instances=instances,
-#             batch_size=batch_size,
-#             rng=rng,
-#             num_realizations=10
-#         )
-#         labels.append(model_ratio)
-#     labels.append(greedy_ratio)
-#     labels = np.array(labels).T
-
-#     y = np.zeros(labels.shape)
-#     y[np.arange(y.shape[0]), np.argmax(labels, axis=1)] = 1
-
-#     return X, y
+    data_list = [Data(X=X[i], y=y[i]) for i in range(len(y))]
+    return data_list
 
 
 def _instances_to_nn_eval(instances: List[_Instance]):
