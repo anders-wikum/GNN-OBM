@@ -1,12 +1,11 @@
 import torch
-import math
-import time
 import torch_converter as pc
 import algorithms as dp
 import numpy as np
 from torch_geometric.loader import DataLoader
 from util import Dataset, diff, fill_list, _flip_coins
 import torch.nn.functional as F
+from gnn_library.node_selectors import NodeSelector
 
 from typing import Optional
 from numpy.random import Generator
@@ -208,7 +207,7 @@ class ParallelExecutionState:
         non_arrival_indices: List[_ModelIndex],
         arrival_indices: List[List[_ModelIndex]]
     ):
-        for model_index, model_arrivals in enumerate(arrival_indices[:-1]):
+        for model_index, model_arrivals in enumerate(arrival_indices):
             if choices[model_index] is not None:
                 arrival_index = 0
                 for (i, j) in model_arrivals:
@@ -256,46 +255,15 @@ def _select_base_model(meta_model, data) -> object:
         return torch.argmax(y, dim=1)
     
 
-def _masked_argmax(tensor, mask, dim):
-    masked = torch.mul(tensor, mask)
-    neg_inf = torch.zeros_like(tensor)
-    neg_inf[~mask] = -math.inf 
-    return (masked + neg_inf).argmax(dim=dim)
-
-
-def _vtg_greedy(
-    pred: torch.Tensor,
-    batch: Dataset,
-    **kwargs
-) -> torch.Tensor:
-    
-    batch_size = batch.ptr.size(dim=0) - 1
-    choices = _masked_argmax(
-                pred.view(batch_size, -1),
-                batch.neighbors.view(batch_size, -1),
-                dim=1
-            )
-    
-    return torch.where(choices < batch.n, choices, -1)
-
-
-EVALUATORS = {
-    'regression': _vtg_greedy,
-    'meta': _vtg_greedy
-}
-
-
 def _compute_base_model_predictions(
-    base_models: List[object],
+    base_models: List[NodeSelector],
     arrival_indices,
     parallel_state: ParallelExecutionState,
     batch_size: int
 ) -> List[torch.Tensor]:
-    
-    device = next(base_models[0].parameters()).device
 
     choices = []
-    for j, model in enumerate(base_models):
+    for j, node_selector in enumerate(base_models):
         model_arrival_indices = arrival_indices[j]
         
         if len(model_arrival_indices) == 0:
@@ -305,19 +273,8 @@ def _compute_base_model_predictions(
                 model_arrival_indices,
                 batch_size
             )
+            model_choices = node_selector.select_nodes(model_batches)
 
-            with torch.no_grad():
-                model_choices = []
-                for batch in model_batches:
-                    batch.to(device)
-                    pred = model(batch)
-                    model_choices.append(
-                        EVALUATORS["meta"](
-                            pred=pred,
-                            batch=batch
-                        )
-                    )
-                model_choices = torch.cat(model_choices)
         choices.append(model_choices)
 
     return choices
@@ -341,7 +298,7 @@ def _execute_greedy(
 def evaluate_model(
     meta_model: object,
     meta_model_type: str,
-    base_models: List[object],
+    base_models: List[NodeSelector],
     instances: List[_Instance],
     batch_size: int,
     rng: Generator,
@@ -357,12 +314,9 @@ def evaluate_model(
     )
 
     # ===================================================================== #
-    num_models = len(base_models) + 1
 
-    # model_assignment = parallel_state.model_assign(
-    #     classify_model,
-    #     device
-    # )
+    num_models = len(base_models)
+    model_assignment = None
 
     for t in range(parallel_state.max_online_nodes):
         model_assignment = parallel_state._model_assign(
@@ -376,7 +330,7 @@ def evaluate_model(
             model_assignment,
             num_models
         )
-
+        
         choices = _compute_base_model_predictions(
             base_models,
             arrival_indices,
@@ -386,7 +340,6 @@ def evaluate_model(
 
         parallel_state.update(t, choices, non_arrival_indices, arrival_indices)
 
-    _execute_greedy(parallel_state, model_assignment, num_models)
     learned_ratios, greedy_ratios = parallel_state.compute_competitive_ratios()
     return (learned_ratios, greedy_ratios)
 
