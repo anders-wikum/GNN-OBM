@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from util import _vtg_greedy_choices
 
 
 class GraphClassifier(torch.nn.Module):
@@ -27,6 +28,7 @@ class GraphClassifier(torch.nn.Module):
         self.output_dim = args.output_dim
         self.dropout = args.dropout
         self.num_layers = args.num_layers
+        self.device = args.device
 
         modules = [
             nn.Linear(
@@ -68,3 +70,12 @@ class GraphClassifier(torch.nn.Module):
             x = F.dropout(x, self.dropout, self.training)
         x = self.mods[-1](x)
         return x
+    
+    def batch_select_match_nodes(self, batches):
+        with torch.no_grad():
+            choices = []
+            for batch in batches:
+                batch.to(self.device)
+                pred = self(batch)
+                choices.append(_vtg_greedy_choices(pred, batch))
+            return torch.cat(choices)

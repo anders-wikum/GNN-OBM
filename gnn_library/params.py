@@ -1,12 +1,14 @@
 from .OBM_GENConv import OBM_GENConv
 from .OBM_NNConv import OBM_NNConv
 from .OBM_multiclass import GraphClassifier
+from .sandbox import OBM_class
 
 
 NETWORKS = {
     'GENConv': OBM_GENConv,
     'NNConv': OBM_NNConv,
-    'NN': GraphClassifier
+    'NN': GraphClassifier,
+    'TEST': OBM_class
 }
 
 #TODO: Make this an absolute path so that it can be called from anywhere

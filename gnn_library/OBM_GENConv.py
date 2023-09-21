@@ -2,10 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GENConv
-from util import _extract_batch
+from util import _extract_batch, _vtg_greedy_choices
 
 
-#TODO: fix graph classification
 class OBM_GENConv(torch.nn.Module):
     """
     GNN to predict node-level embeddings. Then applies a linear layer to 
@@ -33,12 +32,16 @@ class OBM_GENConv(torch.nn.Module):
         self.dropout = args.dropout
         self.num_layers = args.num_layers
         self.classify = (args.head in ['classification', 'meta'])
+        self.device = args.device
 
-        conv_modules = [GENConv(
-            in_channels=input_dim,
-            out_channels=hidden_dim,
-            aggr=args.aggr,
-            edge_dim=edge_feature_dim)]
+        conv_modules = [
+            GENConv(
+                in_channels=input_dim,
+                out_channels=hidden_dim,
+                aggr=args.aggr,
+                edge_dim=edge_feature_dim
+            )
+        ]
         conv_modules.extend(
             [
                 GENConv(
@@ -53,14 +56,14 @@ class OBM_GENConv(torch.nn.Module):
 
         self.convs = nn.ModuleList(conv_modules)
         self.regression_head = nn.Linear(
-            hidden_dim + self.graph_feature_dim, output_dim)
+            hidden_dim + self.graph_feature_dim,
+            output_dim
+        )
 
     def reset_parameters(self):
         for conv in self.convs:
             conv.reset_parameters()
         self.regression_head.reset_parameters()
-        if self.classify:
-            self.classification_head.reset_parameters()
 
     def forward(self, batch):
         x, edge_index, edge_attr, batch, num_graphs, graph_features = \
@@ -73,6 +76,11 @@ class OBM_GENConv(torch.nn.Module):
 
         if self.graph_feature_dim > 0:
             num_nodes = x.size(dim=0) // num_graphs
+            graph_features = graph_features \
+                .T \
+                .unsqueeze(self.graph_feature_dim) \
+                .repeat(1, 1, num_nodes)
+           
             graph_features = torch.cat(
                 graph_features.view(
                     num_graphs,
@@ -81,7 +89,7 @@ class OBM_GENConv(torch.nn.Module):
                 ).unbind(dim=0), 
                 dim=1
             )
-            
+        
         x = torch.hstack((x, graph_features.T))
         x = self.regression_head(x)
         
@@ -89,3 +97,12 @@ class OBM_GENConv(torch.nn.Module):
             x = x.view(num_graphs, num_nodes, -1)[:, -1, :].flatten()       
 
         return x
+    
+    def batch_select_match_nodes(self, batches):
+        with torch.no_grad():
+            choices = []
+            for batch in batches:
+                batch.to(self.device)
+                pred = self(batch)
+                choices.append(_vtg_greedy_choices(pred, batch))
+            return torch.cat(choices)

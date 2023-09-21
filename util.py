@@ -6,8 +6,7 @@ from torch_geometric.data import InMemoryDataset
 from numpy.random import Generator
 from copy import copy
 import torch
-from typing import List
-from params import _Instance
+import math
 
 
 class Dataset(InMemoryDataset):
@@ -38,6 +37,27 @@ class NumpyDataset(Dataset):
 class objectview(object):
     def __init__(self, d):
         self.__dict__ = d
+
+
+def _masked_argmax(tensor, mask, dim):
+    masked = torch.mul(tensor, mask)
+    neg_inf = torch.zeros_like(tensor)
+    neg_inf[~mask] = -math.inf 
+    return (masked + neg_inf).argmax(dim=dim)
+
+
+def _vtg_greedy_choices(pred: torch.Tensor, batch: Dataset) -> torch.Tensor:
+    try:
+        batch_size = batch.ptr.size(dim=0) - 1
+    except:
+        batch_size = 1
+    choices = _masked_argmax(
+                pred.view(batch_size, -1),
+                batch.neighbors.view(batch_size, -1),
+                dim=1
+            )
+    
+    return torch.where(choices < batch.n, choices, -1)
 
 
 def fill_list(value: object, size: int):

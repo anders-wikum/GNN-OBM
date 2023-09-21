@@ -5,7 +5,6 @@ import numpy as np
 from torch_geometric.loader import DataLoader
 from util import Dataset, diff, fill_list, _flip_coins
 import torch.nn.functional as F
-from gnn_library.node_selectors import NodeSelector
 
 from typing import Optional
 from numpy.random import Generator
@@ -118,7 +117,7 @@ class ParallelExecutionState:
     
     def _heuristic_model_assign(self, meta_model):
         online_offline_ratios = np.array([
-            realized_state.dataset.graph_features[1, 1].item()
+            realized_state.dataset.graph_features[1].item()
             for execution_state in self.execution_states
             for realized_state in execution_state.state_realizations
         ])
@@ -154,7 +153,7 @@ class ParallelExecutionState:
             preds = []
             for batch in data_loader:
                 batch.to(device)
-                pred = F.sigmoid(meta_model(batch))
+                pred = _select_base_model(meta_model, batch)
                 preds.append(pred)
             preds = torch.cat(preds)
         return torch.round(preds) \
@@ -256,14 +255,14 @@ def _select_base_model(meta_model, data) -> object:
     
 
 def _compute_base_model_predictions(
-    base_models: List[NodeSelector],
+    base_models: List[torch.nn.Module],
     arrival_indices,
     parallel_state: ParallelExecutionState,
     batch_size: int
 ) -> List[torch.Tensor]:
 
     choices = []
-    for j, node_selector in enumerate(base_models):
+    for j, model in enumerate(base_models):
         model_arrival_indices = arrival_indices[j]
         
         if len(model_arrival_indices) == 0:
@@ -273,7 +272,7 @@ def _compute_base_model_predictions(
                 model_arrival_indices,
                 batch_size
             )
-            model_choices = node_selector.select_nodes(model_batches)
+            model_choices = model.batch_select_match_nodes(model_batches)
 
         choices.append(model_choices)
 
@@ -298,7 +297,7 @@ def _execute_greedy(
 def evaluate_model(
     meta_model: object,
     meta_model_type: str,
-    base_models: List[NodeSelector],
+    base_models: List[torch.nn.Module],
     instances: List[_Instance],
     batch_size: int,
     rng: Generator,
