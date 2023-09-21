@@ -74,8 +74,11 @@ def _gen_edge_tensors(A: _Array) -> Tuple[torch.tensor, torch.tensor]:
 
 
 def _gen_graph_features(m, n, offline_nodes, t):
-    ratio = torch.tensor([(m - t) / len(offline_nodes)] * (n + m + 1))
-    t = torch.tensor([t] * (n + m + 1))
+    # ratio = torch.tensor([(m - t) / len(offline_nodes)] * (n + m + 1))
+    # t = torch.tensor([t] * (n + m + 1))
+
+    ratio = torch.Tensor([(m - t) / len(offline_nodes)])
+    t = torch.Tensor([t])
 
     return torch.stack(
         [
@@ -294,7 +297,10 @@ def _skip_class(instance, offline_nodes, t, cache, **kwargs):
 
 
 def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
-
+    # if t >= 4:
+    #     return [0, 0, 1]
+    # else:
+    #     return [1, 0, 0]
     A, _ = instance
     hint = one_step_stochastic_opt(
         A, offline_nodes, t, cache
@@ -303,8 +309,8 @@ def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
     data = kwargs['data']
 
     choices = [
-        selector.select_nodes([data]).item()
-        for selector in models
+        model.batch_select_match_nodes([data]).item()
+        for model in models
     ]
 
     index_of_choice = {}
@@ -324,16 +330,10 @@ def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
     
     max_index = np.argmax(vtgs)
     label = np.zeros(len(models))
-    #print(len(vtgs), np.unique(vtgs).shape[0])
     if len(vtgs) != np.unique(vtgs).shape[0]:
         return label
     label[max_index] = 1
     return label
-    
-    if vtgs[0] > vtgs[1]:
-        return [0]
-    else:
-        return [1]
 
 
 LABEL_FUNCS = {
@@ -375,7 +375,7 @@ def _instance_to_sample_path(
         sample_data = pyg_graph
     else:
         sample_data = SAMPLE_INIT_FUNCS[meta_net_type](instance, rng)
-        base_modes = []
+        #base_models = []
 
     sample_path = []
     offline_nodes = frozenset(np.arange(n))
@@ -392,11 +392,11 @@ def _instance_to_sample_path(
                 **kwargs
             )
 
-           
-            # Label data, add to sample path
-            labeled_sample = \
-                SAMPLE_LABEL_FUNCS[meta_net_type](sample_data, labels)
-            sample_path.append(labeled_sample)
+            if not np.all(labels == 0):
+                # Label data, add to sample path
+                labeled_sample = \
+                    SAMPLE_LABEL_FUNCS[meta_net_type](sample_data, labels)
+                sample_path.append(labeled_sample)
 
        
             # Update state / data

@@ -10,6 +10,7 @@ from torch_geometric.loader import DataLoader
 from tqdm import trange
 from .params import NETWORKS, REQ_ARGS, MODEL_SAVE_FOLDER
 from util import objectview
+from typing import Optional
 
 
 class MaskedMSELoss(nn.Module):
@@ -31,7 +32,6 @@ class MaskedMSELoss(nn.Module):
         value_to_go = batch.hint
         neighbor_mask = batch.neighbors
         preds = pred[neighbor_mask].squeeze(dim=1)
-        # print(preds.size(), value_to_go.size())
         return F.mse_loss(preds, value_to_go)
 
 
@@ -41,9 +41,12 @@ class pygCrossEntropyLoss(nn.Module):
         super(pygCrossEntropyLoss, self).__init__()
 
     def forward(self, pred, batch):
-        return F.binary_cross_entropy_with_logits(
+        C = pred.size(dim=1)
+           
+        #print(torch.argmax(batch.hint.view(-1, C), dim=1), pred)
+        return F.cross_entropy(
             pred,
-            batch.hint
+            batch.hint.view(-1, C)
         )
     
 
@@ -87,7 +90,6 @@ def build_optimizer(args, params):
     return scheduler, optimizer
 
 
-# TODO: Get classification working again
 def _get_loss(args):
     if args.head == 'regression':
         return MaskedMSELoss()
@@ -124,6 +126,10 @@ def train(train_loader, test_loader, args):
         device=args.device
     )
 
+def _mc_accuracy(pred, batch):
+    C = pred.size(dim=1)
+    return torch.sum(batch.hint.view(-1, C).argmax(dim=1) == pred.argmax(dim=1))\
+        / pred.size(dim=0)
 
 def _train(
         model: object,
@@ -187,6 +193,7 @@ def _test(loader, test_model, loss_fn, device):
     test_model.eval()
     test_model.to(device)
     total_loss = 0
+    total_accuracy = 0
 
     for batch in loader:
         if type(batch) is list:
@@ -199,8 +206,11 @@ def _test(loader, test_model, loss_fn, device):
             pred = test_model(batch)
             loss = loss_fn(pred, batch)
             total_loss += loss * scale
+            total_accuracy += _mc_accuracy(pred, batch) * scale
 
     total_loss /= len(loader.dataset)
+    total_accuracy /= len(loader.dataset)
+    print(f'TEST ACCURACY: {total_accuracy}')
 
     return total_loss
 
