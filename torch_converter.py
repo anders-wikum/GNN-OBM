@@ -297,10 +297,7 @@ def _skip_class(instance, offline_nodes, t, cache, **kwargs):
 
 
 def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
-    # if t >= 4:
-    #     return [0, 0, 1]
-    # else:
-    #     return [1, 0, 0]
+
     A, _ = instance
     hint = one_step_stochastic_opt(
         A, offline_nodes, t, cache
@@ -330,7 +327,7 @@ def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
     
     max_index = np.argmax(vtgs)
     label = np.zeros(len(models))
-    if len(vtgs) != np.unique(vtgs).shape[0]:
+    if np.sum([vtgs == np.max(vtgs)]) > 1:
         return label
     label[max_index] = 1
     return label
@@ -392,11 +389,11 @@ def _instance_to_sample_path(
                 **kwargs
             )
 
-            if not np.all(labels == 0):
+            # if not np.all(labels == 0):
                 # Label data, add to sample path
-                labeled_sample = \
-                    SAMPLE_LABEL_FUNCS[meta_net_type](sample_data, labels)
-                sample_path.append(labeled_sample)
+            labeled_sample = \
+                SAMPLE_LABEL_FUNCS[meta_net_type](sample_data, labels)
+            sample_path.append(labeled_sample)
 
        
             # Update state / data
@@ -450,7 +447,46 @@ def _instances_to_train_samples(
         )
     return samples
 
+def _encode_one_hot_max(array):
+    label = np.zeros(array.shape[0])
+    label[np.argmax(array)] = 1
+    return label
 
+def _instances_to_gnn_samples(
+    instances: List[_Instance],
+    base_models: List[object],
+    batch_size: int,
+    head: str   
+):
+    
+    from evaluate import evaluate_model
+    rng = np.random.default_rng()
+    data_list = []
+    for instance in instances:
+        data_list.append(SAMPLE_INIT_FUNCS['gnn'](instance, rng))
+    
+    labels = []
+    for model in base_models:
+        model_ratio, _ = evaluate_model(
+            meta_model=None,
+            meta_model_type=None,
+            base_models=[model],
+            instances=instances,
+            batch_size=batch_size,
+            rng=rng,
+            num_realizations=5
+        )
+        labels.append(model_ratio)
+    labels = np.array(labels).T
+
+    for i, data in enumerate(data_list):
+        instance_label = labels[i, :]
+        if head == 'classification':
+            instance_label = _encode_one_hot_max(instance_label)
+        data.hint = torch.tensor(instance_label, dtype=torch.float32)
+
+    return data_list
+    
 def _instances_to_nn_samples(
         instances: List[_Instance],
         base_models: List[object],
