@@ -53,7 +53,6 @@ class GraphClassifier(torch.nn.Module):
                 )
             ]
         )
-        
 
         self.mods = nn.ModuleList(modules)
 
@@ -69,7 +68,7 @@ class GraphClassifier(torch.nn.Module):
             x = F.relu(x)
             x = F.dropout(x, self.dropout, self.training)
         x = self.mods[-1](x)
-        return x
+        return x.softmax(dim=1)
     
     def batch_select_match_nodes(self, batches):
         with torch.no_grad():

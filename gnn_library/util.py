@@ -42,7 +42,7 @@ class pygCrossEntropyLoss(nn.Module):
 
     def forward(self, pred, batch):
         C = pred.size(dim=1)
-           
+        return F.mse_loss(pred.flatten(), batch.hint)
         #print(torch.argmax(batch.hint.view(-1, C), dim=1), pred)
         return F.cross_entropy(
             pred,
@@ -128,8 +128,13 @@ def train(train_loader, test_loader, args):
 
 def _mc_accuracy(pred, batch):
     C = pred.size(dim=1)
-    return torch.sum(batch.hint.view(-1, C).argmax(dim=1) == pred.argmax(dim=1))\
-        / pred.size(dim=0)
+
+    try:
+        return torch.sum(batch.hint.view(-1, C).argmax(dim=1) == pred.argmax(dim=1))\
+            / pred.size(dim=0)
+    except:
+        return torch.sum(batch[1].view(-1, C).argmax(dim=1) == pred.argmax(dim=1))\
+            / pred.size(dim=0)
 
 def _train(
         model: object,

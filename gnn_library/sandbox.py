@@ -91,7 +91,7 @@ class OBM_class(torch.nn.Module):
         # if self.classify:
         #     x = x.view(num_graphs, num_nodes, -1)[:, -1, :].flatten()       
 
-        return x.view(num_graphs, -1).softmax(dim=1)
+        return x.view(num_graphs, -1)#.softmax(dim=1)
     
     def batch_select_match_nodes(self, batches):
         with torch.no_grad():
