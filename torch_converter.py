@@ -325,11 +325,11 @@ def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
     data.to('cpu')
     vtgs = hint[neighor_indices]
     
-    max_index = np.argmax(vtgs)
+    all_indices = np.arange(len(vtgs))
+    max_indices = all_indices[vtgs == np.max(vtgs)]
+    one_hot_index = np.random.choice(max_indices)
     label = np.zeros(len(models))
-    if np.sum([vtgs == np.max(vtgs)]) > 1:
-        return label
-    label[max_index] = 1
+    label[one_hot_index] = 1
     return label
 
 
@@ -389,11 +389,11 @@ def _instance_to_sample_path(
                 **kwargs
             )
 
-            # if not np.all(labels == 0):
+            if not np.all(labels == 0):
                 # Label data, add to sample path
-            labeled_sample = \
-                SAMPLE_LABEL_FUNCS[meta_net_type](sample_data, labels)
-            sample_path.append(labeled_sample)
+                labeled_sample = \
+                    SAMPLE_LABEL_FUNCS[meta_net_type](sample_data, labels)
+                sample_path.append(labeled_sample)
 
        
             # Update state / data
@@ -449,6 +449,9 @@ def _instances_to_train_samples(
 
 def _encode_one_hot_max(array):
     label = np.zeros(array.shape[0])
+    if np.sum(array == np.max(array)) > 1:
+        return label
+    
     label[np.argmax(array)] = 1
     return label
 
@@ -479,13 +482,16 @@ def _instances_to_gnn_samples(
         labels.append(model_ratio)
     labels = np.array(labels).T
 
+    keep_indices = []
     for i, data in enumerate(data_list):
         instance_label = labels[i, :]
         if head == 'classification':
             instance_label = _encode_one_hot_max(instance_label)
+            if not np.all(instance_label == 0):
+                keep_indices.append(i)
         data.hint = torch.tensor(instance_label, dtype=torch.float32)
 
-    return data_list
+    return [data_list[i] for i in keep_indices]
     
 def _instances_to_nn_samples(
         instances: List[_Instance],

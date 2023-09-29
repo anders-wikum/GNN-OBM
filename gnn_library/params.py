@@ -1,14 +1,18 @@
 from .OBM_GENConv import OBM_GENConv
 from .OBM_NNConv import OBM_NNConv
 from .OBM_multiclass import GraphClassifier
-from .sandbox import OBM_class
+from .sandbox import OBM_class, DeeperGCN, GATv2Conv, NNConvSandbox, TransformerConvSandbox
 
 
 NETWORKS = {
     'GENConv': OBM_GENConv,
     'NNConv': OBM_NNConv,
     'NN': GraphClassifier,
-    'TEST': OBM_class
+    'TEST': OBM_class,
+    'TEST2': DeeperGCN,
+    'TEST3': GATv2Conv,
+    'TEST4': NNConvSandbox,
+    'TEST5': TransformerConvSandbox
 }
 
 #TODO: Make this an absolute path so that it can be called from anywhere
@@ -44,7 +48,6 @@ REQ_ARGS = {
         'processor',
         'head',
         'num_layers',
-        'input_dim',
         'hidden_dim',
         'output_dim',
         'dropout',
