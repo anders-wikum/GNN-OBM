@@ -42,7 +42,7 @@ class pygCrossEntropyLoss(nn.Module):
 
     def forward(self, pred, batch):
         C = pred.size(dim=1)
-        return F.mse_loss(pred.flatten(), batch.hint)
+        # return F.mse_loss(pred.flatten(), batch.hint)
         #print(torch.argmax(batch.hint.view(-1, C), dim=1), pred)
         return F.cross_entropy(
             pred,
@@ -222,9 +222,9 @@ def _test(loader, test_model, loss_fn, device):
 
 def save(model: object, args: dict, name: str) -> None:
     path = MODEL_SAVE_FOLDER + name
-    filtered_args = {key: args[key] for key in REQ_ARGS[args['head']]}
+    #filtered_args = {key: args[key] for key in REQ_ARGS[args['head']]}
     torch.save(model.state_dict(), path)
-    pickle.dump(filtered_args, open(path + '_args.pickle', 'wb'))
+    pickle.dump(args, open(path + '_args.pickle', 'wb'))
 
 
 def load(name: str, device: str) -> object:
