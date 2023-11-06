@@ -477,7 +477,7 @@ def _instances_to_gnn_samples(
             instances=instances,
             batch_size=batch_size,
             rng=rng,
-            num_realizations=5
+            num_realizations=10
         )
         labels.append(model_ratio)
     labels = np.array(labels).T
@@ -511,7 +511,7 @@ def _instances_to_nn_samples(
             instances=instances,
             batch_size=batch_size,
             rng=rng,
-            num_realizations=10
+            num_realizations=25
         )
         labels.append(model_ratio)
     #labels.append(greedy_ratio)
