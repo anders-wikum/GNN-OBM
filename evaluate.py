@@ -136,6 +136,69 @@ class ParallelExecutionState:
                 assignment[i] = np.random.choice(non_opt_model_indices)
         return assignment.astype(int)
 
+    
+    def _hybrid_model_assign(
+        self,
+        meta_model: object,
+        batch_size: int
+    ):
+        
+        assignment_len = self.num_instances * self.num_realizations
+        if meta_model is None:
+            return np.zeros(assignment_len).astype(int)
+
+        device = next(meta_model.parameters()).device
+        data_list = [
+            realized_state.dataset
+            for execution_state in self.execution_states
+            for realized_state in execution_state.state_realizations
+        ]
+        gnn1_mask = [False] * assignment_len
+        gnn2_mask = [False] * assignment_len
+        meta_learner_mask = [False] * assignment_len
+
+        for i, data in enumerate(data_list):
+            online_offline_ratio = data.graph_features[1].item()
+
+            if online_offline_ratio >= 2.0:
+                gnn1_mask[i] = True
+            elif data.graph_features[1].item() < 0.75:
+                gnn2_mask[i] = True
+            else:
+                meta_learner_mask[i] = True
+
+        meta_learner_data_list = [
+            data_list[i] for i, boolean in enumerate(meta_learner_mask)
+            if boolean
+        ]
+  
+        assignment = np.zeros(assignment_len)
+        assignment[gnn1_mask] = 0
+        assignment[gnn2_mask] = 1
+        
+        if len(meta_learner_data_list) > 0:
+            data_loader = DataLoader(
+                Dataset(meta_learner_data_list),
+                batch_size=batch_size,
+                shuffle=False,
+                pin_memory=True
+            )
+
+            with torch.no_grad():
+                preds = []
+                for batch in data_loader:
+                    batch.to(device)
+                    pred = _select_base_model(meta_model, batch)
+                    preds.append(pred)
+                preds = torch.cat(preds) \
+                    .round() \
+                    .cpu() \
+                    .numpy()
+        
+            assignment[meta_learner_mask] = preds
+
+        return assignment.astype(int)
+
 
     def _gnn_model_assign(
         self,
@@ -204,6 +267,8 @@ class ParallelExecutionState:
     ):
         if meta_model_type == 'gnn':
             return self._gnn_model_assign(meta_model, batch_size)
+        elif meta_model_type == 'hybrid':
+            return self._hybrid_model_assign(meta_model, batch_size)
         elif meta_model_type == 'nn':
             return self._nn_model_assign(meta_model)
         else:
