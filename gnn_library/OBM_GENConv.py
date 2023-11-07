@@ -106,3 +106,4 @@ class OBM_GENConv(torch.nn.Module):
                 pred = self(batch)
                 choices.append(_vtg_greedy_choices(pred, batch))
             return torch.cat(choices)
+
