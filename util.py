@@ -59,6 +59,18 @@ def _vtg_greedy_choices(pred: torch.Tensor, batch: Dataset) -> torch.Tensor:
     
     return torch.where(choices < batch.n, choices, -1)
 
+def _vtg_predictions(pred: torch.Tensor, batch: Dataset) -> torch.Tensor:
+    # Returns the model's predictions, masked to only keep the neighbor predictions
+    try:
+        batch_size = batch.ptr.size(dim=0) - 1
+    except:
+        batch_size = 1
+
+    return torch.mul(
+        pred.view(batch_size, -1),
+        batch.neighbors.view(batch_size, -1)
+    )
+
 
 def fill_list(value: object, size: int):
     return [copy(value) for _ in range(size)]
