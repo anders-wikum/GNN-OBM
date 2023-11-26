@@ -33,6 +33,7 @@ class OBM_GENConv(torch.nn.Module):
         self.num_layers = args.num_layers
         self.classify = (args.head in ['classification', 'meta'])
         self.device = args.device
+        self.head = args.head
 
         conv_modules = [
             GENConv(
@@ -66,8 +67,11 @@ class OBM_GENConv(torch.nn.Module):
         self.regression_head.reset_parameters()
 
     def forward(self, batch):
-        x, edge_index, edge_attr, batch, num_graphs, graph_features = \
+        x, edge_index, edge_attr, _, num_graphs, graph_features = \
             _extract_batch(batch)
+        
+        if self.head == 'meta':
+            x = torch.hstack([x, batch.base_model_preds])
 
         for i in range(self.num_layers):
             x = self.convs[i](x, edge_index, edge_attr)
@@ -92,9 +96,8 @@ class OBM_GENConv(torch.nn.Module):
         
         x = torch.hstack((x, graph_features.T))
         x = self.regression_head(x)
-        
         if self.classify:
-            x = x.view(num_graphs, num_nodes, -1)[:, -1, :].flatten()       
+            x = x.view(num_graphs, num_nodes, -1)[:, -1, :]    
 
         return x
     

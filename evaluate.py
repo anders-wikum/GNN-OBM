@@ -3,7 +3,7 @@ import torch_converter as pc
 import algorithms as dp
 import numpy as np
 from torch_geometric.loader import DataLoader
-from util import Dataset, diff, fill_list, _flip_coins
+from util import Dataset, diff, fill_list, _flip_coins, _vtg_greedy_choices
 import torch.nn.functional as F
 from algorithms import cache_stochastic_opt
 
@@ -15,13 +15,14 @@ from params import _Array, _Instance
 _ModelIndex = Tuple[int, int]
 
 class StateRealization:
-    def __init__(self, instance: _Instance, rng: Generator):
+    def __init__(self, instance: _Instance, rng: Generator, base_models: List[torch.nn.Module]):
         (A, p) = instance
         self.value = 0
         self.matching = []
         self.offline_nodes = frozenset(np.arange(A.shape[1]))
-        self.dataset = pc.init_pyg(instance, rng)
+        self.dataset = pc.init_pyg(instance, rng, base_models)
         self.coin_flips = _flip_coins(p, rng)
+        self.base_models = base_models
 
     def update(self, instance, choice: int, t: int):
         A, _ = instance
@@ -38,7 +39,8 @@ class StateRealization:
                 instance,
                 choice,
                 t + 1,
-                self.offline_nodes
+                self.offline_nodes,
+                self.base_models
             )
 
 
@@ -47,7 +49,8 @@ class ExecutionState:
         self,
         instance: _Instance,
         num_realizations: int,
-        rng: Generator
+        rng: Generator,
+        base_models: List[torch.nn.Module]
     ):
         (A, p) = instance
         self.A = A
@@ -55,7 +58,7 @@ class ExecutionState:
         self.p = p
 
         self.state_realizations = [
-            StateRealization(instance, rng)
+            StateRealization(instance, rng, base_models)
             for _ in range(num_realizations)
         ]
 
@@ -65,13 +68,14 @@ class ParallelExecutionState:
         self,
         instances: List[_Instance],
         num_realizations: int,
-        rng: Generator
+        rng: Generator,
+        base_models: List[torch.nn.Module]
     ):
         self.num_instances = len(instances)
         self.num_realizations = num_realizations
         self.max_online_nodes = np.max([A.shape[0] for (A, _) in instances])
         self.execution_states = [
-            ExecutionState(instance, num_realizations, rng)
+            ExecutionState(instance, num_realizations, rng, base_models)
             for instance in instances
         ]
 
@@ -112,8 +116,7 @@ class ParallelExecutionState:
         return DataLoader(
             data,
             batch_size=batch_size,
-            shuffle=False,
-            pin_memory=True
+            shuffle=False
         )
     
     def _heuristic_model_assign(self, meta_model):
@@ -125,7 +128,7 @@ class ParallelExecutionState:
         if meta_model is None:
             return np.zeros(len(online_offline_ratios)).astype(int)
         return (online_offline_ratios < 1.5).astype(int)
-    
+
 
     def _shakey_model_assign(self, base_models: List[object], epsilon: float):
         assignment = np.zeros(self.num_instances)
@@ -219,8 +222,7 @@ class ParallelExecutionState:
         data_loader = DataLoader(
             data,
             batch_size=batch_size,
-            shuffle=False,
-            pin_memory=True
+            shuffle=False
         )
 
         with torch.no_grad():
@@ -328,7 +330,7 @@ def _select_base_model(meta_model, data) -> object:
     with torch.no_grad():
         y = meta_model(data)
         return torch.argmax(y, dim=1)
-    
+
 
 def _compute_base_model_predictions(
     base_models: List[torch.nn.Module],
@@ -353,6 +355,42 @@ def _compute_base_model_predictions(
         choices.append(model_choices)
 
     return choices
+
+def _batch_select_test(batches):
+    choices = []
+    for batch in batches:
+        vtg_sum = batch.base_model_preds
+        vtg_sum = vtg_sum / torch.linalg.vector_norm(vtg_sum, dim=0, ord=1)
+        vtg_sum = vtg_sum.sum(dim=1)
+        vtg_sum = vtg_sum.to('cuda:2')
+        choices.append(_vtg_greedy_choices(vtg_sum, batch))
+    return torch.cat(choices)
+
+
+def _compute_avg_predictions(
+    base_models: List[torch.nn.Module],
+    arrival_indices,
+    parallel_state: ParallelExecutionState,
+    batch_size: int
+) -> List[torch.Tensor]:
+
+    choices = []
+    for j, _ in enumerate(base_models):
+        model_arrival_indices = arrival_indices[j]
+        
+        if len(model_arrival_indices) == 0:
+            model_choices = None
+        else:
+            model_batches = parallel_state.batch_data(
+                model_arrival_indices,
+                batch_size
+            )
+            model_choices = _batch_select_test(model_batches)
+
+        choices.append(model_choices)
+
+    return choices
+
 
 def _compute_shakey_model_predictions(
     base_models: List[torch.nn.Module],
@@ -423,7 +461,8 @@ def evaluate_model(
     parallel_state = ParallelExecutionState(
         instances,
         num_realizations,
-        rng
+        rng,
+        base_models
     )
 
     # ===================================================================== #
@@ -432,13 +471,12 @@ def evaluate_model(
     model_assignment = None
 
     for t in range(parallel_state.max_online_nodes):
-        if model_assignment is None:
-            model_assignment = parallel_state._model_assign(
-                meta_model,
-                meta_model_type,
-                batch_size
-            )
-            print(np.unique(model_assignment, return_counts=True))
+
+        model_assignment = parallel_state._model_assign(
+            meta_model,
+            meta_model_type,
+            batch_size
+        )
 
         non_arrival_indices, arrival_indices = parallel_state.get_arrivals(
             t,
@@ -452,6 +490,13 @@ def evaluate_model(
             parallel_state,
             batch_size
         )
+
+        # choices = _compute_avg_predictions(
+        #     base_models,
+        #     arrival_indices,
+        #     parallel_state,
+        #     batch_size
+        # )
 
         parallel_state.update(t, choices, non_arrival_indices, arrival_indices)
 
