@@ -32,41 +32,21 @@ def _neighbor_encoder(A, offline_nodes, t):
     return torch.tensor([*[u in N_t for u in np.arange(n + m)], True])
 
 
-def _gen_node_features(m: int, n: int, p: _Array, t: int, rng: Generator, kwargs = None):
+def _gen_node_features(m: int, n: int, p: _Array, t: int, rng: Generator):
     offline_mask = _gen_mask(n + m + 1, slice(0, n, 1))
     arrival_mask = _gen_mask(n + m + 1, n + t)
     pos_encoder = _positional_encoder(n + m + 1, rng)
     arrival_probs = _arrival_encoder(p, t, n + m + 1)
 
-    if kwargs is not None:
-        # Add model predictions as a node feature (for the GNN case)
-        models = kwargs['models']
-        data = kwargs['data']
-
-        model_predictions = [
-            model.batch_return_predictions([data]).cpu()
-            for model in models
+    return torch.stack(
+        [
+            pos_encoder,
+            offline_mask,
+            arrival_probs,
+            arrival_mask
         ]
-        model_predictions = torch.cat(model_predictions).T
+    ).T.type(torch.FloatTensor)
 
-        return torch.hstack(
-            [
-                pos_encoder.unsqueeze(-1),
-                offline_mask.unsqueeze(-1),
-                arrival_probs.unsqueeze(-1),
-                arrival_mask.unsqueeze(-1),
-                model_predictions
-            ]
-        ).type(torch.FloatTensor)
-    else:
-        return torch.stack(
-            [
-                pos_encoder,
-                offline_mask,
-                arrival_probs,
-                arrival_mask
-            ]
-        ).T.type(torch.FloatTensor)
 
 
 def _gen_edge_tensors(A: _Array) -> Tuple[torch.tensor, torch.tensor]:
@@ -112,7 +92,7 @@ def _gen_graph_features(m, n, offline_nodes, t):
 def init_pyg(
     instance: _Instance,
     rng: Generator,
-    kwargs = None
+    base_models: List[torch.nn.Module] | None
 ) -> Data:
     '''
     Initializes a PyG data object representing the problem instance (A, p).
@@ -123,12 +103,12 @@ def init_pyg(
     offline_nodes = frozenset(np.arange(n))
     t = 0
 
-    x = _gen_node_features(m, n, p, t, rng, kwargs)
+    x = _gen_node_features(m, n, p, t, rng)
     edge_index, edge_attr = _gen_edge_tensors(A)
     neighbors = _neighbor_encoder(A, offline_nodes, t)
     graph_features = _gen_graph_features(m, n, offline_nodes, t)
 
-    return Data(
+    pyg_graph = Data(
         x=x,
         edge_index=edge_index,
         edge_attr=edge_attr,
@@ -137,6 +117,17 @@ def init_pyg(
         m=torch.tensor([m]),
         n=torch.tensor([n])
     )
+    if base_models is None:
+        return pyg_graph
+    
+    model_predictions = [
+        model.batch_return_predictions([pyg_graph]).cpu()
+        for model in base_models
+    ]
+    
+    model_predictions = torch.cat(model_predictions).T
+    pyg_graph.base_model_preds = model_predictions.type(torch.FloatTensor)
+    return pyg_graph 
 
 
 def update_pyg(
@@ -145,10 +136,24 @@ def update_pyg(
     choice: int,
     t: int,
     offline_nodes: frozenset,
-    kwargs = None
+    base_models: List[torch.nn.Module] | None
 ) -> None:
+    
     A, _ = instance
     m, n = A.shape
+
+    def _remove_old_predictions():
+        data.base_model_preds = torch.tensor([])
+
+    def _add_new_predictions():
+        model_predictions = [
+                model.batch_return_predictions([data]).cpu()
+                for model in base_models
+            ]
+        model_predictions = torch.cat(model_predictions).T
+        data.base_model_preds = model_predictions.type(torch.FloatTensor)
+
+
     def _filter_choice_edges(edge_index, edge_attr):
         mask = ((edge_index != choice) & (edge_index != n + t - 1)).all(dim=0)
         return edge_index[:, mask], edge_attr[mask, :]
@@ -159,20 +164,6 @@ def update_pyg(
         data.x[n + t, 2] = 1
         data.x[n + t, 3] = 1
         data.x[n + t - 1, 3] = 0
-
-        if kwargs is not None:
-            # Update the model prediction features (for the GNN case)
-            models = kwargs['models']
-            pyg_graph = kwargs['data']
-
-            model_predictions = [
-                model.batch_return_predictions([pyg_graph]).cpu()
-                for model in models
-            ]
-            model_predictions = torch.cat(model_predictions).T
-
-            # Index 4-5 => model predictions
-            data.x[:, 4:6] = model_predictions
 
     def _update_edges():
         edge_index, edge_attr = _filter_choice_edges(
@@ -196,10 +187,14 @@ def update_pyg(
         else:
             data.graph_features[1] = (m - t - 1) / num_offline
 
+    _remove_old_predictions()
     _update_node_features()
     _update_edges()
     _update_graph_features()
     _update_neighbors()
+    
+    if base_models is not None:
+        _add_new_predictions()
 
 
 def label_pyg(data: Data, y: _Array) -> Data:
@@ -363,13 +358,16 @@ def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
 
     data.to('cpu')
     vtgs = hint[neighor_indices]
-    
+    label = np.zeros(len(models))
+
     all_indices = np.arange(len(vtgs))
     max_indices = all_indices[vtgs == np.max(vtgs)]
-    one_hot_index = np.random.choice(max_indices)
-    label = np.zeros(len(models))
-    label[one_hot_index] = 1
+    if len(max_indices) == 1:
+        label[max_indices[0]] = 1
+    
     return label
+    
+    
 
 
 LABEL_FUNCS = {
@@ -408,17 +406,16 @@ def _instance_to_sample_path(
     # There is a disctinction between the pyg graph for the base models and the
     # pyg graph for the meta model, the latter includes base model predictions as
     # a node feature
-    pyg_graph_base_models = SAMPLE_INIT_FUNCS['gnn'](instance, rng)
-    kwargs_base_models = {'data': pyg_graph_base_models, 'models': base_models}
+    pyg_graph = SAMPLE_INIT_FUNCS['gnn'](instance, rng, base_models)
     if base_models is None or meta_net_type == 'gnn':
-        pyg_graph_meta_model = SAMPLE_INIT_FUNCS['gnn'](instance, rng, kwargs_base_models) 
-        sample_data = pyg_graph_meta_model
+        sample_data = pyg_graph
     else:
         sample_data = SAMPLE_INIT_FUNCS[meta_net_type](instance, rng)
         #base_models = []
 
     sample_path = []
     offline_nodes = frozenset(np.arange(n))
+    kwargs = {'data': pyg_graph, 'models': base_models}
     
     for t in range(m):
         if len(offline_nodes) > 0:
@@ -428,7 +425,7 @@ def _instance_to_sample_path(
                 offline_nodes,
                 t,
                 cache,
-                **kwargs_base_models
+                **kwargs
             )
 
             if not np.all(labels == 0):
@@ -445,22 +442,13 @@ def _instance_to_sample_path(
             if t < m - 1 and len(offline_nodes) > 0:
                 # Update the pyg graph for the base models
                 SAMPLE_UPDATE_FUNCS['gnn'](
-                    pyg_graph_base_models,
-                    instance,
-                    choice,
-                    t + 1,
-                    offline_nodes
-                )
-
-                # Update the pyg graph for the meta model (by recomputing the base model predictions)
-                # The pyg graph in kwargs_base_models is updated by the previous update function
-                SAMPLE_UPDATE_FUNCS['gnn'](
-                    sample_data,
+                    pyg_graph,
                     instance,
                     choice,
                     t + 1,
                     offline_nodes,
-                    kwargs_base_models
+                    base_models
+
                 )
 
                 if meta_net_type != 'gnn':
@@ -469,9 +457,10 @@ def _instance_to_sample_path(
                         instance,
                         choice,
                         t + 1, 
-                        offline_nodes
+                        offline_nodes,
+                        base_models
+
                     )
-         
 
     return sample_path
 

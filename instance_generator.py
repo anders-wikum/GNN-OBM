@@ -144,6 +144,30 @@ def _sample_gmission_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
     return A
 
 
+def _location_feature(num_points: int, rng: Generator) -> _Array:
+    return rng.uniform(0, 1, size=(num_points, 2))
+
+def _rating_feature(num_points: int, rng: Generator) -> _Array:
+    return rng.choice([0.2, 0.4, 0.6, 0.8, 1], size=(num_points, 1))
+
+def _sample_synthetic_features(m: int, n: int, rng: Generator) -> _Array:
+    loc_m = _location_feature(m, rng)
+    rat_m = _rating_feature(m, rng)
+
+    loc_n = _location_feature(n, rng)
+    rat_n = _rating_feature(n, rng)
+
+    return np.hstack([loc_m, rat_m]), np.hstack([loc_n, rat_n])
+
+
+def _sample_feature_bipartite_graph(m: int, n: int, rng: Generator, **kwargs) -> _Array:
+    M, N = _sample_synthetic_features(m, n, rng)
+    q = kwargs.get('q', 0.5)
+    score_matrix = M @ N.T
+    threshold = np.quantile(score_matrix.flatten(), q)
+    return (score_matrix >= threshold).astype(float)
+
+
 def _sample_bipartite_graph(
     m: int,
     n: int,
@@ -155,7 +179,8 @@ def _sample_bipartite_graph(
         'BA': _sample_ba_bipartite_graph,
         'GEOM': _sample_geom_bipartite_graph,
         'COMP': _sample_complete_bipartite_graph,
-        'GM': _sample_gmission_bipartite_graph
+        'GM': _sample_gmission_bipartite_graph,
+        'FEAT': _sample_feature_bipartite_graph
     }
 
     graph_type = kwargs.get('graph_type', '[not provided]')

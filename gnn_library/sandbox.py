@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GENConv, global_mean_pool, global_max_pool
-from util import _extract_batch, _vtg_greedy_choices
+from util import _extract_batch, _vtg_greedy_choices, _vtg_predictions
 
 
 class OBM_class(torch.nn.Module):
@@ -120,6 +120,7 @@ class DeeperGCN(torch.nn.Module):
         self.classify = args.head == 'classification'
         self.pool = args.head == 'meta'
         self.device = args.device
+        self.head = args.head
 
         self.node_encoder = Linear(input_dim, hidden_dim)
         self.edge_encoder = Linear(edge_feature_dim, hidden_dim)
@@ -168,8 +169,12 @@ class DeeperGCN(torch.nn.Module):
             layer.reset_parameters()
 
     def forward(self, batch):
-        x, edge_index, edge_attr, batch, num_graphs, graph_features = \
+        x, edge_index, edge_attr, batch_ids, num_graphs, graph_features = \
             _extract_batch(batch)
+        
+        if self.head == 'meta':
+            x = torch.hstack([x, batch.base_model_preds])
+
         x = self.node_encoder(x)
         edge_attr = self.edge_encoder(edge_attr)
 
@@ -203,7 +208,7 @@ class DeeperGCN(torch.nn.Module):
             x = x.view(num_graphs, num_nodes, -1)[:, -1, :].flatten()
         elif self.pool:
             # Pooling before regression
-            x = global_max_pool(x, batch)
+            x = global_max_pool(x, batch_ids)
         
         if not self.classify: 
             for i in range(self.head_num_layers):
@@ -225,6 +230,18 @@ class DeeperGCN(torch.nn.Module):
                 pred = self(batch)
                 choices.append(_vtg_greedy_choices(pred, batch))
             return torch.cat(choices)
+        
+    def batch_select_test(self, batch):
+        print(batch.base_model_preds.size())
+
+    def batch_return_predictions(self, batches):
+        with torch.no_grad():
+            predictions = []
+            for batch in batches:
+                batch.to(self.device)
+                pred = self(batch)
+                predictions.append(_vtg_predictions(pred, batch))
+            return torch.cat(predictions)
 
 from torch_geometric.nn import GATConv
 

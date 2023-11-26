@@ -211,7 +211,7 @@ def _test(loader, test_model, loss_fn, device):
             pred = test_model(batch)
             loss = loss_fn(pred, batch)
             total_loss += loss * scale
-            total_accuracy += _mc_accuracy(pred, batch) * scale
+            #total_accuracy += _mc_accuracy(pred, batch) * scale
 
     total_loss /= len(loader.dataset)
     total_accuracy /= len(loader.dataset)
