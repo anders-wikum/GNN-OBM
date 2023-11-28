@@ -163,7 +163,6 @@ def _sample_synthetic_features(m: int, n: int, rng: Generator) -> _Array:
 def _sample_feature_bipartite_graph(m: int, n: int, rng: Generator, **kwargs) -> _Array:
     M, N = _sample_synthetic_features(m, n, rng)
     q = kwargs.get('q', 0.9)
-    # rho is the multiplicative factor for the importance of the non-geographic features
 
     weighted = kwargs.get('weighted', False)
     low = kwargs.get('low', 0.0),
@@ -171,15 +170,7 @@ def _sample_feature_bipartite_graph(m: int, n: int, rng: Generator, **kwargs) ->
     ret_features = kwargs.get('ret_features', False)
 
     denom = np.linalg.norm(M, axis = -1, keepdims=True) @ np.linalg.norm(N, axis = -1, keepdims=True).T
-    print(np.linalg.norm(M, axis = -1, keepdims=True))
-    print(np.linalg.norm(N, axis = -1, keepdims=True))
-    print(denom)
     score_matrix = M @ N.T / denom
-    # Computing with L2 distance between the positions of the nodes
-    # from scipy.spatial.distance import cdist
-    # score_matrix = -cdist(M[:, :2], N[:, :2])
-    # # Adding a score for the dot product of the rating features
-    # score_matrix += rho * (M[:, 2:] @ N[:, 2:].T)
 
     threshold = np.quantile(score_matrix.flatten(), q)
     graph_matrix = (score_matrix >= threshold).astype(float)
