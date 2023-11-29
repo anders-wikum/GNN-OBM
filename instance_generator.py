@@ -148,7 +148,8 @@ def _location_feature(num_points: int, rng: Generator) -> _Array:
     return rng.uniform(0, 1, size=(num_points, 2))
 
 def _rating_feature(num_points: int, rng: Generator) -> _Array:
-    return rng.choice([0.2, 0.4, 0.6, 0.8, 1], size=(num_points, 1))
+    # return rng.choice([0.2, 0.4, 0.6, 0.8, 1], size=(num_points, 1))
+    return np.zeros((num_points, 1))
 
 def _sample_synthetic_features(m: int, n: int, rng: Generator) -> _Array:
     loc_m = _location_feature(m, rng)
@@ -159,13 +160,58 @@ def _sample_synthetic_features(m: int, n: int, rng: Generator) -> _Array:
 
     return np.hstack([loc_m, rat_m]), np.hstack([loc_n, rat_n])
 
-
 def _sample_feature_bipartite_graph(m: int, n: int, rng: Generator, **kwargs) -> _Array:
     M, N = _sample_synthetic_features(m, n, rng)
-    q = kwargs.get('q', 0.5)
-    score_matrix = M @ N.T
+    q = kwargs.get('q', 0.9)
+
+    weighted = kwargs.get('weighted', False)
+    low = kwargs.get('low', 0.0),
+    high = kwargs.get('high', 1.0)
+    ret_features = kwargs.get('ret_features', False)
+
+    denom = np.linalg.norm(M, axis = -1, keepdims=True) @ np.linalg.norm(N, axis = -1, keepdims=True).T
+    score_matrix = M @ N.T / denom
+
     threshold = np.quantile(score_matrix.flatten(), q)
-    return (score_matrix >= threshold).astype(float)
+    graph_matrix = (score_matrix >= threshold).astype(float)
+
+    if weighted:
+        graph_matrix = _add_uniform_weights(graph_matrix, low, high, rng)
+
+    if ret_features:
+        return graph_matrix, M, N
+    else:
+        return graph_matrix
+
+def _sample_partitioned_graph(m: int, n: int, rng: Generator, **kwargs):
+    # Creates V_1 ... V_k ER graphs and interconnections with probability epsilon. Each
+    # partition V_i is an ER graph
+
+    p = kwargs.get('p', 0.5)
+    size = kwargs['size']
+    # size is the size that each partition should roughly have
+    eps = kwargs['eps']
+
+    # k is the fraction of m (n) present in each partition
+    k = (m + n) // size
+    print("k: ", k)
+
+    mat = np.zeros((m, n))
+    # Increments for offline/online nodes
+    m_inc = m // k
+    n_inc = n // k
+    for i in range(k - 1):
+        mat[m_inc*i : m_inc*(i+1), n_inc*i : n_inc*(i+1)] = rng.binomial(1, p, size=(m//k, n//k))
+    # Remainder (since k does not necessarily divide m or n)
+    m_rem = m - (k - 1) * m_inc
+    n_rem = n - (k - 1) * n_inc
+    mat[m_inc*(k-1) : m, n_inc*(k - 1) : n] = rng.binomial(1, p, size=(m_rem, n_rem))
+
+    # Adding any fixed edge with probability epsilon
+    eps_mat = rng.binomial(1, eps, size=(m, n))
+    mat = np.logical_or(mat, eps_mat)
+
+    return mat
 
 
 def _sample_bipartite_graph(
@@ -180,11 +226,11 @@ def _sample_bipartite_graph(
         'GEOM': _sample_geom_bipartite_graph,
         'COMP': _sample_complete_bipartite_graph,
         'GM': _sample_gmission_bipartite_graph,
-        'FEAT': _sample_feature_bipartite_graph
+        'FEAT': _sample_feature_bipartite_graph,
+        'PART': _sample_partitioned_graph
     }
 
     graph_type = kwargs.get('graph_type', '[not provided]')
-
     if graph_type not in GRAPH_TYPES:
         raise ValueError(f'Invalid graph type: {graph_type}')
 
