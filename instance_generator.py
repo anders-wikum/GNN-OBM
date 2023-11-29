@@ -222,7 +222,7 @@ def _sample_probs(
     
     # p = rng.uniform(0.5, 1, m)
     # return np.vstack([p for _ in range(num)]).T
-    return rng.uniform(0.5, 1, (m, num))
+    return rng.uniform(0, 1, (m, num))
 
 
 def sample_instances(
