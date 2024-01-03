@@ -64,3 +64,14 @@ class OBM_Greedy(torch.nn.Module):
             batch.to('cpu')
             choices.append(_greedy_choices(batch))
         return torch.cat(choices)
+
+    
+    def batch_return_predictions(self, batches):
+        with torch.no_grad():
+            predictions = []
+            for batch in batches:
+                batch.to('cpu')
+                pred = torch.zeros((1, batch.x.shape[0]))
+                pred[0, _greedy_choices(batch)] = 1
+                predictions.append(pred)
+            return torch.cat(predictions)

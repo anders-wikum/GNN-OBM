@@ -6,7 +6,7 @@ _Instance = Tuple[_Array, _Array]
 
 # ============== Graph sampler params ===================== #
 
-GRAPH_TYPES = ['GEOM', 'ER', 'BA', 'COMP', 'GM', 'FEAT', 'PART']
+GRAPH_TYPES = ['GEOM', 'ER', 'BA', 'COMP', 'GM', 'FEAT', 'PART', 'OSMNX']
 
 SAMPLER_SPECS = {
     'GEOM': set(['threshold', 'scaling']),
@@ -15,7 +15,8 @@ SAMPLER_SPECS = {
     'COMP': set([]),
     'GM': set([]),
     'FEAT': set(['q']),
-    'PART': set(['p', 'size', 'eps'])
+    'PART': set(['p', 'k', 'eps']),
+    'OSMNX': set(['location_graph']),
 }
 
 # ============== END ====================================== #
