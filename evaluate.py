@@ -128,18 +128,8 @@ class ParallelExecutionState:
         if meta_model is None:
             return np.zeros(len(online_offline_ratios)).astype(int)
         return (online_offline_ratios < 1.5).astype(int)
-
-
-    def _shakey_model_assign(self, base_models: List[object], epsilon: float):
-        assignment = np.zeros(self.num_instances)
-        coin_flips = np.random.binomial(1, epsilon, self.num_instances)
-        non_opt_model_indices = np.arange(1, len(base_models) + 1)
-        for i, _ in enumerate(assignment):
-            if coin_flips[i]:
-                assignment[i] = np.random.choice(non_opt_model_indices)
-        return assignment.astype(int)
-
     
+
     def _hybrid_model_assign(
         self,
         meta_model: object,
@@ -307,15 +297,22 @@ class ParallelExecutionState:
         greedy_ratios = np.zeros(
             shape=(self.num_instances, self.num_realizations)
         )
+        lp_match_ratios = np.zeros(
+            shape=(self.num_instances, self.num_realizations)
+        )
 
         for i, ex_state in enumerate(self.execution_states):
             A = ex_state.A
+            p = ex_state.p
             for j, real_state in enumerate(ex_state.state_realizations):
-                OPT = dp.offline_opt(A, real_state.coin_flips)[1]
+                coin_flips = real_state.coin_flips
+                OPT = dp.offline_opt(A, coin_flips)[1]
                 if OPT > 0:
                     learned_ratios[i, j] = real_state.value / OPT
                     greedy_ratios[i, j] = \
                         dp.greedy(A, real_state.coin_flips, 0)[1] / OPT
+                    lp_match_ratios[i, j] = \
+                        dp.lp_approx(A, p, coin_flips)[1] / OPT
                 else:
                     learned_ratios[i, j] = np.nan
                     greedy_ratios[i, j] = np.nan
@@ -323,6 +320,7 @@ class ParallelExecutionState:
         return (
             np.nanmean(learned_ratios, axis=1),
             np.nanmean(greedy_ratios, axis=1),
+            np.nanmean(lp_match_ratios, axis=1)
         )
 
 
@@ -392,44 +390,6 @@ def _compute_avg_predictions(
     return choices
 
 
-def _compute_shakey_model_predictions(
-    base_models: List[torch.nn.Module],
-    caches: List[dict],
-    arrival_indices,
-    parallel_state: ParallelExecutionState,
-    batch_size: int,
-    t: int
-) -> List[torch.Tensor]:
-
-    choices = []
-
-    opt_choices = []
-    for (i, j) in arrival_indices[0]:
-        offline_nodes = parallel_state.execution_states[i].state_realizations[j].offline_nodes
-        choice = caches[i][t][offline_nodes][1]
-        if choice not in offline_nodes:
-            choice = -1
-        opt_choices.append(choice)
-
-    choices.append(torch.tensor(opt_choices))
-
-
-    for j, model in enumerate(base_models):
-        model_arrival_indices = arrival_indices[j + 1]
-        
-        if len(model_arrival_indices) == 0:
-            model_choices = None
-        else:
-            model_batches = parallel_state.batch_data(
-                model_arrival_indices,
-                batch_size
-            )
-            model_choices = model.batch_select_match_nodes(model_batches)
-
-        choices.append(model_choices)
-
-    return choices
-
 def _execute_greedy(
     parallel_state: ParallelExecutionState,
     model_assignment: _Array,
@@ -484,24 +444,24 @@ def evaluate_model(
             num_models
         )
         
-        choices = _compute_base_model_predictions(
-            base_models,
-            arrival_indices,
-            parallel_state,
-            batch_size
-        )
-
-        # choices = _compute_avg_predictions(
+        # choices = _compute_base_model_predictions(
         #     base_models,
         #     arrival_indices,
         #     parallel_state,
         #     batch_size
         # )
 
+        choices = _compute_avg_predictions(
+            base_models,
+            arrival_indices,
+            parallel_state,
+            batch_size
+        )
+
         parallel_state.update(t, choices, non_arrival_indices, arrival_indices)
 
-    learned_ratios, greedy_ratios = parallel_state.compute_competitive_ratios()
-    return (learned_ratios, greedy_ratios)
+    learned_ratios, greedy_ratios, lp_match_ratios = parallel_state.compute_competitive_ratios()
+    return (learned_ratios, greedy_ratios, lp_match_ratios)
 
 
 def pp_output(ratios: list, log: dict, show_log: Optional[bool] = False) -> None:
@@ -514,57 +474,4 @@ def pp_output(ratios: list, log: dict, show_log: Optional[bool] = False) -> None
     print('-- Competitive ratios --')
     print(f"GNN: {np.mean(ratios[0]).round(4)}")
     print(f"Greedy: {np.mean(ratios[1]).round(4)}")
-
-
-def evaluate_shakey_opt(
-    epsilon: float,
-    base_models: List[torch.nn.Module],
-    instances: List[_Instance],
-    batch_size: int,
-    rng: Generator,
-    num_realizations: Optional[int] = 1
-) -> tuple:
-    
-    # ==================== State generation =============================== #
-    
-    parallel_state = ParallelExecutionState(
-        instances,
-        num_realizations,
-        rng
-    )
-
-    caches = [
-        cache_stochastic_opt(*instance)
-        for instance in instances
-    ]
-
-    # ===================================================================== #
-
-    num_models = len(base_models)
-    model_assignment = None
-
-    for t in range(parallel_state.max_online_nodes):
-        model_assignment = parallel_state._shakey_model_assign(
-            base_models,
-            epsilon
-        )
-
-        non_arrival_indices, arrival_indices = parallel_state.get_arrivals(
-            t,
-            model_assignment,
-            num_models + 1
-        )
-        
-        choices = _compute_shakey_model_predictions(
-            base_models,
-            caches,
-            arrival_indices,
-            parallel_state,
-            batch_size,
-            t
-        )
-
-        parallel_state.update(t, choices, non_arrival_indices, arrival_indices)
-
-    learned_ratios, greedy_ratios = parallel_state.compute_competitive_ratios()
-    return (learned_ratios, greedy_ratios)
+    print(f"LP-rounding: {np.mean(ratios[2]).round(4)}")

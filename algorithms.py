@@ -1,7 +1,12 @@
-from params import _Array
+import gurobipy as gp
+import numpy as np
+import itertools as it
+
+from params import _Array, _Instance
 from util import powerset, diff, _neighbors
 from scipy.optimize import linear_sum_assignment
-import numpy as np
+from typing import Optional
+from gurobipy import GRB
 
 
 def cache_stochastic_opt(A: _Array, p: _Array) -> dict:
@@ -136,3 +141,151 @@ def offline_opt(A: _Array, coin_flips: _Array):
     value = A[row_ind, col_ind].sum()
     matching = [(row_ind[i], col_ind[i]) for i in range(len(row_ind))]
     return matching, value
+
+
+def _build_variables(model: gp.Model, indices: list) -> gp.Var:
+    return model.addVars(
+        indices,
+        vtype=GRB.CONTINUOUS,
+        lb=0,
+        name='x'
+    )
+
+def _build_constraints(
+    model: gp.Model,
+    x: gp.Var,
+    p: _Array,
+    online_nodes: list,
+    offline_nodes: list,
+    indices: list
+) -> None:
+    
+    model.addConstrs(
+        (
+            gp.quicksum(x[(i, t)] for t in online_nodes)
+            <= 1
+            for i in offline_nodes
+        ),
+        name="offline_matching"
+    )
+    
+    model.addConstrs(
+        (
+            gp.quicksum(x[(i, t)] for i in offline_nodes)
+            <= p[t]
+            for t in online_nodes
+        ),
+        name="online_matching"
+    )
+    
+    model.addConstrs(
+        (
+            x[(i, t)] - 
+            p[t] * (1 - gp.quicksum(x[i, s] for s in online_nodes[:t])) 
+            <= 0
+            for (i, t) in indices
+        ),
+        name="online_knowledge"
+    )
+
+def _build_objective(
+    model: gp.Model,
+    x: gp.Var,
+    A: _Array,
+    indices: list
+) -> None:
+    
+    model.setObjective(
+        gp.quicksum(x[(i, t)] * A[t, i] for (i, t) in indices),
+        GRB.MAXIMIZE
+    )
+
+def _scale_mat_by_vec(A: _Array, b: _Array) -> _Array:
+    ''' 
+    Given a matrix [A] and vector [b], gives the matrix formed by multiplying
+    the first row of A by b_1, the second row of A by b_2, and so on.
+    '''
+    return (A.T * b).T
+
+def _x_normalizing_constant(x: _Array, p: _Array) -> _Array:
+    used_probs =  1 - np.cumsum(
+        np.vstack([np.zeros(shape=(1, x.shape[1])), x]),
+        axis=0
+    )[:-1]
+
+    return _scale_mat_by_vec(used_probs, p)
+
+
+def _validate_feasibility(x: _Array, p: _Array) -> _Array:
+    x = np.maximum(x, 0)
+    x = np.minimum(x, _x_normalizing_constant(x, p))
+
+    eps = np.finfo(np.float32).eps
+    assert np.all(x.sum(axis=0) - 1 <= eps)
+    assert np.all(x.sum(axis=1) - p <= eps)
+    assert np.all(x >= -eps)
+    assert np.all(x <= _x_normalizing_constant(x, p) + eps)
+
+    return x
+
+def lp_match(A: _Array, p: _Array, verbose: Optional[bool] = False) -> _Array:
+
+    m, n = A.shape
+    online_nodes = range(m)
+    offline_nodes = range(n)
+    indices = list(it.product(offline_nodes, online_nodes))
+
+    model = gp.Model('LP-MATCH')
+    x = _build_variables(model, indices)
+    _build_constraints(model, x, p, online_nodes, offline_nodes, indices)
+    _build_objective(model, x, A, indices)
+   
+    if not verbose:
+        model.Params.LogToConsole = 0
+    model.optimize()
+
+    output = np.array([x[(i, t)].x for (i, t) in indices]).reshape(n, m).T
+    return output, model.ObjVal
+
+
+def _compute_proposal_probs(x, p):
+    return np.maximum(np.minimum(x / _x_normalizing_constant(x, p), 1), 0)
+
+def _vec_binomial(p: _Array):
+    return np.array([np.random.binomial(1, pt) for pt in p]).astype(bool)
+
+def online_lp_rounding(x, A, p, coin_flips):
+
+    proposal_probs = _compute_proposal_probs(x, p)
+    matching = []
+    val = 0
+    offline_mask = np.array(A.shape[1] * [True])
+    m, n = x.shape
+    
+    for t in range(m):
+        if coin_flips[t]:
+            proposals = _vec_binomial(proposal_probs[t])
+            valid_proposals = np.bitwise_and(offline_mask, proposals)
+
+            if not np.all(valid_proposals == 0):
+                matched_node = np.argmax(np.multiply(A[t], valid_proposals))
+                matching.append((t, matched_node))
+                val += A[t, matched_node]
+                offline_mask[matched_node] = 0
+                valid_proposals[matched_node] = 0
+                rejections = _vec_binomial(n * [p[t]])
+                new_rejections = np.bitwise_and(
+                    rejections,
+                    valid_proposals
+                )
+   
+                keep_nodes = np.invert(new_rejections)
+                offline_mask = np.bitwise_and(offline_mask, keep_nodes)
+    return matching, val
+
+
+def lp_approx(A: _Array, p: _Array, coin_flips: _Array):
+    x, _ = lp_match(A, p, verbose=False)
+    # x = _validate_feasibility(x, p)
+
+    return online_lp_rounding(x, A, p, coin_flips)
