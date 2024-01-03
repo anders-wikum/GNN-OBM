@@ -4,6 +4,8 @@ import numpy as np
 import random
 from numpy.random import Generator
 from typing import List, Tuple
+import osmnx as ox
+import networkx as nx
 
 
 def _add_uniform_weights(
@@ -148,8 +150,8 @@ def _location_feature(num_points: int, rng: Generator) -> _Array:
     return rng.uniform(0, 1, size=(num_points, 2))
 
 def _rating_feature(num_points: int, rng: Generator) -> _Array:
-    # return rng.choice([0.2, 0.4, 0.6, 0.8, 1], size=(num_points, 1))
-    return np.zeros((num_points, 1))
+    return rng.choice([0.2, 0.4, 0.6, 0.8, 1], size=(num_points, 1))
+    # return np.zeros((num_points, 1))
 
 def _sample_synthetic_features(m: int, n: int, rng: Generator) -> _Array:
     loc_m = _location_feature(m, rng)
@@ -165,8 +167,6 @@ def _sample_feature_bipartite_graph(m: int, n: int, rng: Generator, **kwargs) ->
     q = kwargs.get('q', 0.9)
 
     weighted = kwargs.get('weighted', False)
-    low = kwargs.get('low', 0.0),
-    high = kwargs.get('high', 1.0)
     ret_features = kwargs.get('ret_features', False)
 
     denom = np.linalg.norm(M, axis = -1, keepdims=True) @ np.linalg.norm(N, axis = -1, keepdims=True).T
@@ -176,25 +176,79 @@ def _sample_feature_bipartite_graph(m: int, n: int, rng: Generator, **kwargs) ->
     graph_matrix = (score_matrix >= threshold).astype(float)
 
     if weighted:
-        graph_matrix = _add_uniform_weights(graph_matrix, low, high, rng)
+        # TODO remove these 4 lines if not doing independent ratings for weights
+        M = _rating_feature(m, rng)
+        N = _rating_feature(n, rng)
+        denom = np.linalg.norm(M, axis = -1, keepdims=True) @ np.linalg.norm(N, axis = -1, keepdims=True).T
+        score_matrix = M @ N.T / denom
+
+        graph_matrix = np.multiply(graph_matrix, score_matrix)
 
     if ret_features:
         return graph_matrix, M, N
     else:
         return graph_matrix
 
+def _sample_osmnx_graph(m: int, n: int, rng: Generator, **kwargs) -> _Array:
+    # Give the location graph to avoid having to download it at each instance
+    # The graph is expected to have travel times
+    location_graph = kwargs.get('location_graph')
+
+    # Only keep matches if the driver can get to the user in less than 15 minutes
+    threshold = kwargs.get('threshold', 15*60)
+
+    
+    return_routes = kwargs.get('ret_routes', False)
+
+    matrix = np.zeros((m, n))
+
+    # Sample drivers and users from intersections in the topology graph
+    drivers = rng.choice(location_graph.nodes, m)
+    users = rng.choice(location_graph.nodes, n)
+
+    routes = []
+
+    for i, driver in enumerate(drivers):
+        # Compute all shortest paths from the driver to possible intersections
+        if return_routes:
+            routes.extend(ox.shortest_path(location_graph, [driver]*len(users), users, weight="travel_time"))
+
+        for j, user in enumerate(users):
+            try:
+                shortest_path = nx.shortest_path_length(location_graph, source = driver, target = user, weight="travel_time")
+                matrix[i, j] = shortest_path
+            except nx.NetworkXNoPath:
+                matrix[i, j] = 0
+
+    # Only keep matches that could happen in a short enough amount of time
+    matrix[matrix >= threshold] = 0
+
+    # Make longer times more costly (divide by a constant beforehand to avoid all the weights)
+    # being very small. The constant corresponds to 5 minutes, an average rideshare wait time
+    # TODO replace constant by average/median time in the matrix?
+    matrix = matrix / (5 * 60)
+    matrix = np.divide(1, matrix, where=matrix > 0)
+    matrix = np.nan_to_num(matrix)
+
+    if (np.isnan(matrix).any()):
+        print(matrix)
+        raise Exception(("matrix contains NA values"))
+
+
+
+    if return_routes:
+        return matrix, routes
+    else:
+        return matrix
+
 def _sample_partitioned_graph(m: int, n: int, rng: Generator, **kwargs):
     # Creates V_1 ... V_k ER graphs and interconnections with probability epsilon. Each
     # partition V_i is an ER graph
 
     p = kwargs.get('p', 0.5)
-    size = kwargs['size']
+    k = kwargs['k']
     # size is the size that each partition should roughly have
     eps = kwargs['eps']
-
-    # k is the fraction of m (n) present in each partition
-    k = (m + n) // size
-    print("k: ", k)
 
     mat = np.zeros((m, n))
     # Increments for offline/online nodes
@@ -227,7 +281,8 @@ def _sample_bipartite_graph(
         'COMP': _sample_complete_bipartite_graph,
         'GM': _sample_gmission_bipartite_graph,
         'FEAT': _sample_feature_bipartite_graph,
-        'PART': _sample_partitioned_graph
+        'PART': _sample_partitioned_graph,
+        'OSMNX': _sample_osmnx_graph
     }
 
     graph_type = kwargs.get('graph_type', '[not provided]')
