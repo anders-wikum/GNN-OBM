@@ -151,7 +151,7 @@ def _location_feature(num_points: int, rng: Generator) -> _Array:
 
 def _rating_feature(num_points: int, rng: Generator) -> _Array:
     return rng.choice([0.2, 0.4, 0.6, 0.8, 1], size=(num_points, 1))
-    # return np.zeros((num_points, 1))
+    #return np.zeros((num_points, 1))
 
 def _sample_synthetic_features(m: int, n: int, rng: Generator) -> _Array:
     loc_m = _location_feature(m, rng)
@@ -173,6 +173,7 @@ def _sample_feature_bipartite_graph(m: int, n: int, rng: Generator, **kwargs) ->
     score_matrix = M @ N.T / denom
 
     threshold = np.quantile(score_matrix.flatten(), q)
+    #threshold = q
     graph_matrix = (score_matrix >= threshold).astype(float)
 
     if weighted:
@@ -323,7 +324,7 @@ def _sample_probs(
     
     # p = rng.uniform(0.5, 1, m)
     # return np.vstack([p for _ in range(num)]).T
-    return rng.uniform(0.5, 1, (m, num))
+    return rng.uniform(0, 1, (m, num))
 
 
 def sample_instances(
