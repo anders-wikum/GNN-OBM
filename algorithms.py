@@ -107,11 +107,14 @@ def stochastic_opt(
     return matching, value
 
 def greedy(
-    A: _Array,
+    instance: _Instance,
     coin_flips: _Array,
-    r: float
+    **kwargs
 ):
+    A, _ = instance
     m, n = A.shape
+    r = kwargs.get('r', 0)
+
     offline_nodes = frozenset(np.arange(n))
     matching = []
     value = 0
@@ -266,7 +269,7 @@ def _compute_proposal_probs(x, p):
 def _vec_binomial(p: _Array):
     return np.array([np.random.binomial(1, pt) for pt in p]).astype(bool)
 
-def online_lp_rounding(x, A, p, coin_flips):
+def _online_lp_rounding(x, A, p, coin_flips):
 
     proposal_probs = _compute_proposal_probs(x, p)
     matching = []
@@ -296,7 +299,6 @@ def online_lp_rounding(x, A, p, coin_flips):
     return matching, val
 
 
-def lp_approx(A: _Array, p: _Array, coin_flips: _Array):
-    x, _ = lp_match(A, p, verbose=False)
-
-    return online_lp_rounding(x, A, p, coin_flips)
+def lp_approx(instance: _Instance, coin_flips: _Array, **kwargs):
+    x, _ = lp_match(*instance, verbose=False)
+    return _online_lp_rounding(x, *instance, coin_flips)
