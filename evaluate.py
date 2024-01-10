@@ -360,7 +360,7 @@ def _batch_select_test(batches):
         vtg_sum = batch.base_model_preds
         vtg_sum = vtg_sum / torch.linalg.vector_norm(vtg_sum, dim=0, ord=1)
         vtg_sum = vtg_sum.sum(dim=1)
-        vtg_sum = vtg_sum.to('cuda:2')
+        vtg_sum = vtg_sum.to('cuda:0')
         choices.append(_vtg_greedy_choices(vtg_sum, batch))
     return torch.cat(choices)
 

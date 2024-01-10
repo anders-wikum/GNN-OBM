@@ -78,4 +78,5 @@ class OBM_Threshold_Greedy(torch.nn.Module):
                 pred = torch.zeros((1, batch.x.shape[0]))
                 pred[0, _threshold_greedy_choices(batch, self.threshold)] = 1
                 predictions.append(pred)
+                batch.to('cuda:0')
             return torch.cat(predictions)

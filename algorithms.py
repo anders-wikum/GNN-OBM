@@ -257,6 +257,8 @@ def _compute_proposal_probs(x, p):
     proposal_probs = np.where(denom_matrix > eps, proposal_probs, 0)
     proposal_probs = np.where(proposal_probs <= 1, proposal_probs, 1)
     proposal_probs = np.round(proposal_probs, 5)
+    proposal_probs = np.where(proposal_probs >= 0, proposal_probs, 0)
+
     
     assert (np.all(proposal_probs >= 0)), f"{proposal_probs[proposal_probs < 0]}"
     assert (np.all(proposal_probs <= 1)), f"{proposal_probs[proposal_probs > 1]}"
@@ -284,15 +286,15 @@ def online_lp_rounding(x, A, p, coin_flips):
                 matching.append((t, matched_node))
                 val += A[t, matched_node]
                 offline_mask[matched_node] = 0
-                # valid_proposals[matched_node] = 0
-                # rejections = _vec_binomial(n * [p[t]])
-                # new_rejections = np.bitwise_and(
-                #     rejections,
-                #     valid_proposals
-                # )
+                valid_proposals[matched_node] = 0
+                rejections = _vec_binomial(n * [p[t]])
+                new_rejections = np.bitwise_and(
+                    rejections,
+                    valid_proposals
+                )
    
-                # keep_nodes = np.invert(new_rejections)
-                # offline_mask = np.bitwise_and(offline_mask, keep_nodes)
+                keep_nodes = np.invert(new_rejections)
+                offline_mask = np.bitwise_and(offline_mask, keep_nodes)
     return matching, val
 
 
