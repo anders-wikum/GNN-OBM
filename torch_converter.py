@@ -319,6 +319,7 @@ def _marginal_vtg(instance, offline_nodes, t, cache, **kwargs):
     hint = one_step_stochastic_opt(
         A, offline_nodes, t, cache
     )
+
     return hint - hint[-1]
 
 
