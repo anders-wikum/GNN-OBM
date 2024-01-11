@@ -13,6 +13,11 @@ from typing import List, Tuple
 from params import _Array, _Instance
 
 _ModelIndex = Tuple[int, int]
+BASELINES = {
+    'greedy': dp.greedy,
+    'lp_rounding': dp.lp_approx
+}
+
 
 class StateRealization:
     def __init__(self, instance: _Instance, rng: Generator, base_models: List[torch.nn.Module]):
@@ -290,16 +295,17 @@ class ParallelExecutionState:
             state.update(instance, -1, t)
 
 
-    def compute_competitive_ratios(self):
-        learned_ratios = np.zeros(
-            shape=(self.num_instances, self.num_realizations)
-        )
-        greedy_ratios = np.zeros(
-            shape=(self.num_instances, self.num_realizations)
-        )
-        lp_match_ratios = np.zeros(
-            shape=(self.num_instances, self.num_realizations)
-        )
+    def compute_competitive_ratios(self, baselines: List[str], **kwargs):
+        ratios = {
+            "learned": np.zeros(
+                shape=(self.num_instances, self.num_realizations)
+            )
+        }
+
+        for baseline in baselines:
+            ratios[baseline] = np.zeros(
+                shape=(self.num_instances, self.num_realizations)
+            )
 
         for i, ex_state in enumerate(self.execution_states):
             A = ex_state.A
@@ -308,20 +314,20 @@ class ParallelExecutionState:
                 coin_flips = real_state.coin_flips
                 OPT = dp.offline_opt(A, coin_flips)[1]
                 if OPT > 0:
-                    learned_ratios[i, j] = real_state.value / OPT
-                    greedy_ratios[i, j] = \
-                        dp.greedy(A, real_state.coin_flips, 0)[1] / OPT
-                    lp_match_ratios[i, j] = \
-                        dp.lp_approx(A, p, coin_flips)[1] / OPT
+                    ratios["learned"][i, j] = real_state.value / OPT
+                    for baseline in baselines:
+                        ratios[baseline][i, j] = \
+                            BASELINES[baseline]((A, p), real_state.coin_flips, **kwargs)[1] / OPT
+                        
                 else:
-                    learned_ratios[i, j] = np.nan
-                    greedy_ratios[i, j] = np.nan
+                    ratios["learned"][i, j] = np.nan
+                    for baseline in baselines:
+                        ratios[baseline] = np.nan
 
-        return (
-            np.nanmean(learned_ratios, axis=1),
-            np.nanmean(greedy_ratios, axis=1),
-            np.nanmean(lp_match_ratios, axis=1)
-        )
+        return {
+            name: np.nanmean(ratio_matrix, axis=1)
+            for (name, ratio_matrix) in ratios.items()
+        }
 
 
 def _select_base_model(meta_model, data) -> object:
@@ -413,7 +419,9 @@ def evaluate_model(
     instances: List[_Instance],
     batch_size: int,
     rng: Generator,
-    num_realizations: Optional[int] = 1
+    num_realizations: Optional[int] = 1,
+    baselines: Optional[List[str]] = [],
+    **kwargs
 ) -> tuple:
     
     # ==================== State generation =============================== #
@@ -460,18 +468,16 @@ def evaluate_model(
 
         parallel_state.update(t, choices, non_arrival_indices, arrival_indices)
 
-    learned_ratios, greedy_ratios, lp_match_ratios = parallel_state.compute_competitive_ratios()
-    return (learned_ratios, greedy_ratios, lp_match_ratios)
+    ratio_dict = parallel_state.compute_competitive_ratios(
+        baselines,
+        **kwargs
+    )
+
+    return ratio_dict
 
 
-def pp_output(ratios: list, log: dict, show_log: Optional[bool] = False) -> None:
-    if show_log:
-        print('-- Execution time --')
-        for key, val in log.items():
-            print(f"{key}: {np.mean(val).round(4)} sec")
-
-        print()
+def pp_output(ratios: dict) -> None:
     print('-- Competitive ratios --')
-    print(f"GNN: {np.mean(ratios[0]).round(4)}")
-    print(f"Greedy: {np.mean(ratios[1]).round(4)}")
-    print(f"LP-rounding: {np.mean(ratios[2]).round(4)}")
+    for (name, approx_ratios) in ratios.items():
+        print(f"{name}: {np.mean(approx_ratios).round(4)}")
+    
