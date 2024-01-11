@@ -12,6 +12,8 @@ from .params import NETWORKS, REQ_ARGS, MODEL_SAVE_FOLDER
 from util import objectview
 from typing import Optional
 
+import optuna
+
 
 class MaskedMSELoss(nn.Module):
 
@@ -109,7 +111,7 @@ def _get_model(args: dict):
     return model
 
 
-def train(train_loader, test_loader, args):
+def train(train_loader, test_loader, args, trial = None):
     args = objectview(args)
     model = _get_model(args)
     model.to(args.device)
@@ -123,7 +125,8 @@ def train(train_loader, test_loader, args):
         test_loader=test_loader,
         epochs=args.epochs,
         opt=opt,
-        device=args.device
+        device=args.device,
+        trial=trial
     )
 
 def _mc_accuracy(pred, batch):
@@ -143,7 +146,8 @@ def _train(
         test_loader: DataLoader,
         epochs: int,
         opt: optim.Optimizer,
-        device: str
+        device: str,
+        trial=None
         ):
     """
     Trains a GNN model, periodically testing it and accumulating loss values
@@ -178,23 +182,33 @@ def _train(
 
             total_loss += loss.item() * scale
         total_loss /= len(train_loader.dataset)
-        print(total_loss)
+        if trial is None:
+            print(f"TRAINING LOSS: {total_loss}")
         train_losses.append(total_loss)
 
-        if epoch % 2 == 0:
-            test_loss = _test(test_loader, model, loss_fn, device)
-            print(f'TEST LOSS: {test_loss}')
+        if epoch % 5 == 0:
+            test_loss = _test(test_loader, model, loss_fn, device, trial)
+            if trial is None:
+                print(f'TEST LOSS: {test_loss}')
             test_losses.append(test_loss)
             if best_loss is None or test_loss < best_loss:
                 best_loss = test_loss
                 best_model = copy.deepcopy(model)
+
+            # Report the test to the tuner
+            if trial is not None:
+                trial.report(test_loss.item(), epoch)
+
+            # Prune based on the intermediate value
+            if trial.should_prune():
+                raise optuna.exceptions.TrialPruned()
         else:
             test_losses.append(test_losses[-1])
 
     return train_losses, test_losses, best_model, best_loss
 
 
-def _test(loader, test_model, loss_fn, device):
+def _test(loader, test_model, loss_fn, device, trial=None):
     test_model.eval()
     test_model.to(device)
     total_loss = 0
@@ -215,7 +229,8 @@ def _test(loader, test_model, loss_fn, device):
 
     total_loss /= len(loader.dataset)
     total_accuracy /= len(loader.dataset)
-    print(f'TEST ACCURACY: {total_accuracy}')
+    if trial is None:
+        print(f'TEST ACCURACY: {total_accuracy}')
 
     return total_loss
 
