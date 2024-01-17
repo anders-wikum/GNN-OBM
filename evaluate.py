@@ -322,7 +322,7 @@ class ParallelExecutionState:
                 else:
                     ratios["learned"][i, j] = np.nan
                     for baseline in baselines:
-                        ratios[baseline] = np.nan
+                        ratios[baseline][i,j] = np.nan
 
         return {
             name: np.nanmean(ratio_matrix, axis=1)
@@ -366,7 +366,7 @@ def _batch_select_test(batches):
         vtg_sum = batch.base_model_preds
         vtg_sum = vtg_sum / torch.linalg.vector_norm(vtg_sum, dim=0, ord=1)
         vtg_sum = vtg_sum.sum(dim=1)
-        vtg_sum = vtg_sum.to('cuda:0')
+        vtg_sum = vtg_sum.to('cuda:2')
         choices.append(_vtg_greedy_choices(vtg_sum, batch))
     return torch.cat(choices)
 
