@@ -325,10 +325,16 @@ def _marginal_vtg(instance, offline_nodes, t, cache, **kwargs):
 
 def _skip_class(instance, offline_nodes, t, cache, **kwargs):
     A, _ = instance
+    # Return the actual value to go. It is turned into a discrete
+    # label when computing loss/accuracy (it makes passing the values 
+    # around easier for batching)
     hint = one_step_stochastic_opt(
         A, offline_nodes, t, cache
     )
-    return [1 * (np.argmax(hint) == len(hint) - 1)]
+
+    # return [1 * (np.argmax(hint) == len(hint) - 1)]
+    return hint
+
 
 
 def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
