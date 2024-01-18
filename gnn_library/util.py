@@ -43,12 +43,50 @@ class pygCrossEntropyLoss(nn.Module):
         super(pygCrossEntropyLoss, self).__init__()
 
     def forward(self, pred, batch):
-        C = pred.size(dim=1)
-        # return F.mse_loss(pred.flatten(), batch.hint)
+        criterion = nn.BCELoss()
+        sig = nn.Sigmoid()
+
+        hints = batch.hint
+
+        # Only consider neighbors of the current online node
+        neighbor_mask = batch.neighbors
+        pred_per_graph = pred[neighbor_mask].squeeze(dim=1).T
+        batch_index = batch.batch[neighbor_mask]
+
+        # print(f"pred: {pred.shape}")
+        # print(f"batch: {batch.batch.shape}")
+        # print(batch.batch[neighbor_mask].shape)
+
+        # print(f"pred per graph before where: {pred_per_graph.shape}")
+        # print(f"hints per graph before where: {hints.shape}")
+
+        # Get the predicted node per graph
+        mask = torch.arange(len(torch.unique(batch.batch))).unsqueeze(1).to(pred_per_graph.device) == batch_index.unsqueeze(0)
+        pred_per_graph = torch.where(mask, pred_per_graph, float('-inf'))
+
+        # print(f"pred per graph before sig: {pred_per_graph.shape}")
+
+        # Create an array that is 1 only 
+        maximizers = torch.argmax(torch.where(mask, hints.unsqueeze(0), float('-inf')), dim=1)
+        hints_per_graph = torch.zeros_like(pred_per_graph)
+        hints_per_graph[torch.arange(maximizers.shape[0]), maximizers] = 1
+        
+        # Pass predictions through a sigmoid
+        # print(f"mask shape {mask.shape}")
+        # print(f"hints per graph: {hints_per_graph.shape}")
+        pred_per_graph = sig(pred_per_graph)
+
+        # print(pred_per_graph.shape)
+        # print(batch.hint)
+
         #print(torch.argmax(batch.hint.view(-1, C), dim=1), pred)
-        return F.cross_entropy(
-            pred,
-            batch.hint.view(-1, C)
+        # first_elems = torch.nonzero(mask)
+        # print(mask)
+        # print(first_elems)
+
+        return criterion(
+            pred_per_graph,
+            hints_per_graph
         )
     
 
@@ -104,6 +142,14 @@ def _get_loss(args):
             return pygCrossEntropyLoss()
     else:
         raise NotImplemented
+
+def _get_acc(args):
+    if args.head == 'regression':
+        return _regression_accuracy
+    elif args.head == 'classification':
+        return _classification_accuracy
+    else:
+        raise NotImplemented
     
 
 def _get_model(args: dict):
@@ -116,11 +162,13 @@ def train(train_loader, test_loader, args, trial = None):
     model = _get_model(args)
     model.to(args.device)
     loss_fn = _get_loss(args)
+    acc_fn = _get_acc(args)
     _, opt = build_optimizer(args, model.parameters())
 
     return _train(
         model=model,
         loss_fn=loss_fn,
+        acc_fn=acc_fn,
         train_loader=train_loader,
         test_loader=test_loader,
         epochs=args.epochs,
@@ -129,7 +177,8 @@ def train(train_loader, test_loader, args, trial = None):
         trial=trial
     )
 
-def _mc_accuracy(pred, batch):
+def _regression_accuracy(pred, batch):
+
     # Only consider neighbors of the current online node
     hints = batch.hint
     neighbor_mask = batch.neighbors
@@ -143,9 +192,26 @@ def _mc_accuracy(pred, batch):
 
     return torch.sum(pred_per_graph == hints_per_graph) / pred_per_graph.shape[0]
 
+def _classification_accuracy(pred, batch):
+
+    # Only consider neighbors of the current online node
+    hints = batch.hint
+    neighbor_mask = batch.neighbors
+    preds = pred[neighbor_mask].squeeze(dim=1)
+    batch_index = batch.batch[neighbor_mask]
+
+    # Get the predicted node per graph
+    mask = torch.arange(len(torch.unique(batch.batch))).unsqueeze(1).to(preds.device) == batch_index.unsqueeze(0)
+    pred_per_graph = torch.argmax(torch.where(mask, preds.unsqueeze(0), float('-inf')), dim=1)
+    hints = torch.argmax(torch.where(mask, hints.unsqueeze(0), float('-inf')), dim=1)
+    # hints = batch.hint.type(torch.LongTensor).to(pred_per_graph.device)
+
+    return torch.sum(pred_per_graph == hints) / pred_per_graph.shape[0]
+
 def _train(
         model: object,
         loss_fn: callable,
+        acc_fn: callable,
         train_loader: DataLoader,
         test_loader: DataLoader,
         epochs: int,
@@ -191,8 +257,8 @@ def _train(
             print(f"TRAINING LOSS: {total_loss}")
         train_losses.append(total_loss)
 
-        if epoch % 5 == 0:
-            test_loss, test_accuracy = _test(test_loader, model, loss_fn, device, trial)
+        if epoch % 4 == 0:
+            test_loss, test_accuracy = _test(test_loader, model, loss_fn, acc_fn, device)
             if trial is None:
                 print(f'TEST LOSS: {test_loss}')
                 print(f'TEST ACCURACY: {test_accuracy}')
@@ -216,7 +282,7 @@ def _train(
     return train_losses, test_losses, test_accuracies, best_model, best_loss
 
 
-def _test(loader, test_model, loss_fn, device, trial=None):
+def _test(loader, test_model, loss_fn, acc_fn, device):
     test_model.eval()
     test_model.to(device)
     total_loss = 0
@@ -233,7 +299,7 @@ def _test(loader, test_model, loss_fn, device, trial=None):
             pred = test_model(batch)
             loss = loss_fn(pred, batch)
             total_loss += loss * scale
-            total_accuracy += _mc_accuracy(pred, batch) * scale
+            total_accuracy += acc_fn(pred, batch) * scale
 
     total_loss /= len(loader.dataset)
     total_accuracy /= len(loader.dataset)

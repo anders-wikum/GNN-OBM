@@ -96,8 +96,9 @@ class OBM_GENConv(torch.nn.Module):
         
         x = torch.hstack((x, graph_features.T))
         x = self.regression_head(x)
-        if self.classify:
-            x = x.view(num_graphs, num_nodes, -1)[:, -1, :]    
+
+        # if self.classify:
+        #     x = x.view(num_graphs, num_nodes, -1)[:, -1, :]    
 
         return x
     
