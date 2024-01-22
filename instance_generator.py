@@ -1,6 +1,7 @@
 from params import SAMPLER_SPECS, GRAPH_TYPES, _Array, _Instance
 from util import _random_subset, _load_gmission
 import numpy as np
+import torch
 import random
 from numpy.random import Generator
 from typing import List, Tuple
@@ -326,19 +327,31 @@ def _sample_probs(
     # return np.vstack([p for _ in range(num)]).T
     return rng.uniform(0, 1, (m, num))
 
+def _add_noise_to_vector(array, rng, noise_std, clamp = True):
+    # Adds random gaussian noise with std noise_std. If clamp is True
+    # the result gets clamped between 0 and 1 (used for probability distributions
+    # and weights since they are always bounded 
+    noisy_array = torch.tensor(rng.normal(array, noise_std))
+    if clamp:
+        noisy_array = torch.clamp(noisy_array, 0, 1)
+    return noisy_array
+
 
 def sample_instances(
     m: int,
     n: int,
     num: int,
     rng: Generator,
+    args,
     **kwargs
 ) -> Tuple[List[_Instance], _Array]:
-    
+    noise_std = args['noise']
     As = _sample_bipartite_graphs(m, n, num, rng, **kwargs)
+    noisy_As = [_add_noise_to_vector(A, rng, noise_std) for A in As]
     ps = _sample_probs(m, num, rng)
+    noisy_ps = _add_noise_to_vector(ps, rng, noise_std)
     instances = [
-        (As[i], ps[:, i])
+        (As[i], ps[:, i], noisy_As[i], noisy_ps[:, i])
         for i in range(len(As))
     ]
     return instances

@@ -2,7 +2,9 @@ import numpy as np
 from typing import Tuple
 
 _Array = np.ndarray
-_Instance = Tuple[_Array, _Array]
+
+# An instance is: A, p, noisy A, noisy p
+_Instance = Tuple[_Array, _Array, _Array, _Array]
 
 # ============== Graph sampler params ===================== #
 

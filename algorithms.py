@@ -111,7 +111,7 @@ def greedy(
     coin_flips: _Array,
     **kwargs
 ):
-    A, _ = instance
+    A, _, noisy_A, _ = instance
     m, n = A.shape
     r = kwargs.get('r', 0)
 
@@ -119,16 +119,16 @@ def greedy(
     matching = []
     value = 0
 
-    A = np.copy(A)
+    noisy_A = np.copy(noisy_A)
 
     for t in range(m):
         if coin_flips[t]:
-            choice = np.argmax(A[t, :])
-            if choice in offline_nodes and A[t, choice] > r:
+            choice = np.argmax(noisy_A[t, :])
+            if choice in offline_nodes and noisy_A[t, choice] > r:
                 matching.append((t, choice))
                 offline_nodes = diff(offline_nodes, choice)
                 value += A[t, choice]
-                A[:, choice] = 0
+                noisy_A[:, choice] = 0
 
     return matching, value
 
