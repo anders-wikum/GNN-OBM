@@ -21,7 +21,7 @@ BASELINES = {
 
 class StateRealization:
     def __init__(self, instance: _Instance, rng: Generator, base_models: List[torch.nn.Module]):
-        (A, p) = instance
+        (A, p, _, _) = instance
         self.value = 0
         self.matching = []
         self.offline_nodes = frozenset(np.arange(A.shape[1]))
@@ -30,7 +30,7 @@ class StateRealization:
         self.base_models = base_models
 
     def update(self, instance, choice: int, t: int):
-        A, _ = instance
+        A, _, _, _ = instance
         # If we don't skip, update state
         if choice != -1:
             self.matching.append((t, choice))
@@ -57,10 +57,13 @@ class ExecutionState:
         rng: Generator,
         base_models: List[torch.nn.Module]
     ):
-        (A, p) = instance
+        (A, p, noisy_A, noisy_p) = instance
         self.A = A
         self.size = A.shape
         self.p = p
+        self.noisy_A = noisy_A
+        self.noisy_p = noisy_p
+
 
         self.state_realizations = [
             StateRealization(instance, rng, base_models)
@@ -78,7 +81,7 @@ class ParallelExecutionState:
     ):
         self.num_instances = len(instances)
         self.num_realizations = num_realizations
-        self.max_online_nodes = np.max([A.shape[0] for (A, _) in instances])
+        self.max_online_nodes = np.max([A.shape[0] for (A, _, _, _) in instances])
         self.execution_states = [
             ExecutionState(instance, num_realizations, rng, base_models)
             for instance in instances
@@ -284,14 +287,14 @@ class ParallelExecutionState:
                 arrival_index = 0
                 for (i, j) in model_arrivals:
                     choice = choices[model_index][arrival_index].item()
-                    instance = (self.execution_states[i].A, self.execution_states[i].p)
+                    instance = (self.execution_states[i].A, self.execution_states[i].p, self.execution_states[i].noisy_A, self.execution_states[i].noisy_p)
                     state = self.execution_states[i].state_realizations[j]
                     state.update(instance, choice, t)
                     arrival_index += 1
         
         for (i, j) in non_arrival_indices:
             state = self.execution_states[i].state_realizations[j]
-            instance = (self.execution_states[i].A, self.execution_states[i].p)
+            instance = (self.execution_states[i].A, self.execution_states[i].p, self.execution_states[i].noisy_A, self.execution_states[i].noisy_p)
             state.update(instance, -1, t)
 
     def _compute_win_rates(self, OPT_matching, matching, win_rate_log):
@@ -327,6 +330,8 @@ class ParallelExecutionState:
         for i, ex_state in enumerate(self.execution_states):
             A = ex_state.A
             p = ex_state.p
+            noisy_A = ex_state.noisy_A
+            noisy_p = ex_state.noisy_p
             for j, real_state in enumerate(ex_state.state_realizations):
                 coin_flips = real_state.coin_flips
                 OPT_matching, OPT = dp.offline_opt(A, coin_flips)
@@ -340,7 +345,7 @@ class ParallelExecutionState:
                     )
                     for baseline in baselines:
                         matching, value = BASELINES[baseline](
-                            (A, p),
+                            (A, p, noisy_A, noisy_p),
                             real_state.coin_flips,
                             **kwargs
                         )
