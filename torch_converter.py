@@ -33,23 +33,28 @@ def _neighbor_encoder(A, offline_nodes, t):
 
 
 def _gen_node_features(m: int, n: int, p: _Array, t: int, rng: Generator):
-    offline_mask = _gen_mask(n + m + 1, slice(0, n, 1))
-    arrival_mask = _gen_mask(n + m + 1, n + t)
     pos_encoder = _positional_encoder(n + m + 1, rng)
+    offline_mask = _gen_mask(n + m + 1, slice(0, n, 1))
     arrival_probs = _arrival_encoder(p, t, n + m + 1)
+    arrival_mask = _gen_mask(n + m + 1, n + t)
+    skip_node_encoder = _gen_mask(n + m + 1, n + m)
 
     return torch.stack(
         [
             pos_encoder,
             offline_mask,
             arrival_probs,
-            arrival_mask
+            arrival_mask,
+            skip_node_encoder
         ]
     ).T.type(torch.FloatTensor)
 
 
 
-def _gen_edge_tensors(A: _Array) -> Tuple[torch.tensor, torch.tensor]:
+def _gen_edge_tensors(A: _Array, A_values: _Array) -> Tuple[torch.tensor, torch.tensor]:
+    # A is used to decide if an edge is added, A_values is used
+    # to add the values to edge_attr. This is useful to use noisy
+    # weight values 
     m, n = A.shape
     edge_index = []; edge_attr = []
 
@@ -59,8 +64,8 @@ def _gen_edge_tensors(A: _Array) -> Tuple[torch.tensor, torch.tensor]:
             if A[i, j] > 0:
                 edge_index.append([j, n + i])
                 edge_index.append([n + i, j])
-                edge_attr.append([A[i, j]])
-                edge_attr.append([A[i, j]])
+                edge_attr.append([A_values[i, j]])
+                edge_attr.append([A_values[i, j]])
     
     # Add edges to virtual node representing no match
     for i in range(0, m):
@@ -72,7 +77,6 @@ def _gen_edge_tensors(A: _Array) -> Tuple[torch.tensor, torch.tensor]:
     edge_index = torch.tensor(edge_index).T
     edge_attr = torch.tensor(edge_attr).type(torch.FloatTensor)
     return edge_index, edge_attr
-
 
 def _gen_graph_features(m, n, offline_nodes, t):
     # ratio = torch.tensor([(m - t) / len(offline_nodes)] * (n + m + 1))
@@ -95,18 +99,20 @@ def init_pyg(
     base_models: List[torch.nn.Module] | None
 ) -> Data:
     '''
-    Initializes a PyG data object representing the problem instance (A, p).
+    Initializes a PyG data object representing the problem instance (A, p, noisy_A, noisy_p).
     '''
-    A, p = instance
+    A, _, noisy_A, noisy_p = instance
     m, n = A.shape
 
     offline_nodes = frozenset(np.arange(n))
     t = 0
 
-    x = _gen_node_features(m, n, p, t, rng)
-    edge_index, edge_attr = _gen_edge_tensors(A)
+    x = _gen_node_features(m, n, noisy_p, t, rng)
+    edge_index, edge_attr = _gen_edge_tensors(A, noisy_A)
+
     neighbors = _neighbor_encoder(A, offline_nodes, t)
     graph_features = _gen_graph_features(m, n, offline_nodes, t)
+
 
     pyg_graph = Data(
         x=x,
@@ -117,6 +123,7 @@ def init_pyg(
         m=torch.tensor([m]),
         n=torch.tensor([n])
     )
+
     if base_models is None:
         return pyg_graph
     
@@ -139,7 +146,7 @@ def update_pyg(
     base_models: List[torch.nn.Module] | None
 ) -> None:
     
-    A, _ = instance
+    A, _, _, _ = instance
     m, n = A.shape
 
     def _remove_old_predictions():
@@ -170,6 +177,7 @@ def update_pyg(
             data.edge_index,
             data.edge_attr
         )
+
         data.edge_index = edge_index
         data.edge_attr = edge_attr
 
@@ -203,12 +211,12 @@ def label_pyg(data: Data, y: _Array) -> Data:
 
 
 def _density(instance: _Instance) -> float:
-   A, _ = instance
+   A, _, _, _ = instance
    return (A > 0).sum() / (A >= 0).sum()
 
 
 def _online_ratio(instance: _Instance) -> float:
-    A, _ = instance
+    A, _, _, _ = instance
     m, n = A.shape
     return m / n
 
@@ -217,7 +225,7 @@ def _exp_clustering_coef_quantiles(
     instance: _Instance,
     threshold: float
 ) -> List[float]:
-    A, p = instance
+    A, p, _, _ = instance
     if np.all(A == 0):
         return np.array([0] * 2)
     
@@ -231,7 +239,7 @@ def _exp_graph_clustering_coef(
     instance: _Instance,
     threshold: float
 ) -> List[float]:
-    A, p = instance
+    A, p, _, _ = instance
     if np.all(A == 0):
         return 0
 
@@ -239,7 +247,7 @@ def _exp_graph_clustering_coef(
 
 
 def _edge_quantiles(instance: _Instance) -> List[float]:
-    A, _ = instance
+    A, _, _, _ = instance
     if np.all(A == 0):
         return np.array([0] * 5)
     
@@ -250,7 +258,7 @@ def _edge_quantiles(instance: _Instance) -> List[float]:
 
 
 def _expected_online_ratio(instance: _Instance) -> float:
-    A, p = instance
+    A, p, _, _ = instance
     n = A.shape[1]
     return p.sum() / n
 
@@ -296,7 +304,7 @@ def update_features(
     offline_nodes: frozenset
 ) -> None:
     
-    A, p = instance
+    A, p, _, _ = instance
     # Filter used offline nodes, online nodes that have arrived
     p_new = p[t:]
     A_new = A[t:, :]
@@ -315,7 +323,7 @@ def _2d_normalize(arr: _Array):
 
 
 def _marginal_vtg(instance, offline_nodes, t, cache, **kwargs):
-    A, _ = instance
+    A, _, _, _ = instance
     hint = one_step_stochastic_opt(
         A, offline_nodes, t, cache
     )
@@ -324,7 +332,7 @@ def _marginal_vtg(instance, offline_nodes, t, cache, **kwargs):
 
 
 def _skip_class(instance, offline_nodes, t, cache, **kwargs):
-    A, _ = instance
+    A, _, _, _ = instance
     # Return the actual value to go. It is turned into a discrete
     # label when computing loss/accuracy (it makes passing the values 
     # around easier for batching)
@@ -338,8 +346,7 @@ def _skip_class(instance, offline_nodes, t, cache, **kwargs):
 
 
 def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
-
-    A, _ = instance
+    A, _, _, _ = instance
     hint = one_step_stochastic_opt(
         A, offline_nodes, t, cache
     )
@@ -406,7 +413,7 @@ def _instance_to_sample_path(
     meta_net_type: str | None,
     base_models: List[object] | None
 ):
-    A, _ = instance
+    A, _, _, _ = instance
     m, n = A.shape
 
     # Initialize data at start of sample path
@@ -476,7 +483,7 @@ def _instances_to_train_samples(
     instances: List[_Instance],
     head: str,
     meta_model_type: Optional[str] = 'gnn',
-    base_models: Optional[List[object]] = None
+    base_models: Optional[List[object]] = None,
 ) -> list:
     
     samples = []
@@ -484,7 +491,7 @@ def _instances_to_train_samples(
     label_fn = LABEL_FUNCS[head]
 
     for instance in instances:
-        cache = cache_stochastic_opt(*instance)
+        cache = cache_stochastic_opt(instance[0], instance[1])
         samples.extend(
             _instance_to_sample_path(
                 instance,
@@ -505,43 +512,43 @@ def _encode_one_hot_max(array):
     label[np.argmax(array)] = 1
     return label
 
-def _instances_to_gnn_samples(
-    instances: List[_Instance],
-    base_models: List[object],
-    batch_size: int,
-    head: str   
-):
+# def _instances_to_gnn_samples(
+#     instances: List[_Instance],
+#     base_models: List[object],
+#     batch_size: int,
+#     head: str   
+# ):
     
-    from evaluate import evaluate_model
-    rng = np.random.default_rng()
-    data_list = []
-    for instance in instances:
-        data_list.append(SAMPLE_INIT_FUNCS['gnn'](instance, rng))
+#     from evaluate import evaluate_model
+#     rng = np.random.default_rng()
+#     data_list = []
+#     for instance in instances:
+#         data_list.append(SAMPLE_INIT_FUNCS['gnn'](instance, rng))
     
-    labels = []
-    for model in base_models:
-        model_ratio, _ = evaluate_model(
-            meta_model=None,
-            meta_model_type=None,
-            base_models=[model],
-            instances=instances,
-            batch_size=batch_size,
-            rng=rng,
-            num_realizations=10
-        )
-        labels.append(model_ratio)
-    labels = np.array(labels).T
+#     labels = []
+#     for model in base_models:
+#         model_ratio, _ = evaluate_model(
+#             meta_model=None,
+#             meta_model_type=None,
+#             base_models=[model],
+#             instances=instances,
+#             batch_size=batch_size,
+#             rng=rng,
+#             num_realizations=10
+#         )
+#         labels.append(model_ratio)
+#     labels = np.array(labels).T
 
-    keep_indices = []
-    for i, data in enumerate(data_list):
-        instance_label = labels[i, :]
-        if head == 'classification':
-            instance_label = _encode_one_hot_max(instance_label)
-            if not np.all(instance_label == 0):
-                keep_indices.append(i)
-        data.hint = torch.tensor(instance_label, dtype=torch.float32)
+#     keep_indices = []
+#     for i, data in enumerate(data_list):
+#         instance_label = labels[i, :]
+#         if head == 'classification':
+#             instance_label = _encode_one_hot_max(instance_label)
+#             if not np.all(instance_label == 0):
+#                 keep_indices.append(i)
+#         data.hint = torch.tensor(instance_label, dtype=torch.float32)
 
-    return [data_list[i] for i in keep_indices]
+#     return [data_list[i] for i in keep_indices]
     
 def _instances_to_nn_samples(
         instances: List[_Instance],

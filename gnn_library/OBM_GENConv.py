@@ -69,7 +69,7 @@ class OBM_GENConv(torch.nn.Module):
     def forward(self, batch):
         x, edge_index, edge_attr, _, num_graphs, graph_features = \
             _extract_batch(batch)
-        
+
         if self.head == 'meta':
             x = torch.hstack([x, batch.base_model_preds])
 
