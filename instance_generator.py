@@ -194,54 +194,29 @@ def _sample_feature_bipartite_graph(m: int, n: int, rng: Generator, **kwargs) ->
 def _sample_osmnx_graph(m: int, n: int, rng: Generator, **kwargs) -> _Array:
     # Give the location graph to avoid having to download it at each instance
     # The graph is expected to have travel times
-    location_graph = kwargs.get('location_graph')
+    location_info = kwargs.get('location_info')
+    intersections = location_info["intersections"]
+    drive_times = location_info["drive_times"]
 
     # Only keep matches if the driver can get to the user in less than 15 minutes
     threshold = kwargs.get('threshold', 15*60)
-
-    
-    return_routes = kwargs.get('ret_routes', False)
-
-    matrix = np.zeros((m, n))
+    travel_times = np.zeros((m, n))
 
     # Sample drivers and users from intersections in the topology graph
-    drivers = rng.choice(location_graph.nodes, m)
-    users = rng.choice(location_graph.nodes, n)
+    riders = rng.choice(intersections, m)
+    drivers = rng.choice(intersections, n)
 
-    routes = []
-
-    for i, driver in enumerate(drivers):
-        # Compute all shortest paths from the driver to possible intersections
-        if return_routes:
-            routes.extend(ox.shortest_path(location_graph, [driver]*len(users), users, weight="travel_time"))
-
-        for j, user in enumerate(users):
+    for i, rider in enumerate(riders):
+        for j, driver in enumerate(drivers):
             try:
-                shortest_path = nx.shortest_path_length(location_graph, source = driver, target = user, weight="travel_time")
-                matrix[i, j] = shortest_path
-            except nx.NetworkXNoPath:
-                matrix[i, j] = 0
+                travel_times[i, j] = drive_times[rider][driver]
+            except:
+                travel_times[i, j] = drive_times[driver].get(rider, 100000)
 
-    # Only keep matches that could happen in a short enough amount of time
-    matrix[matrix >= threshold] = 0
-
-    # Make longer times more costly (divide by a constant beforehand to avoid all the weights)
-    # being very small. The constant corresponds to 5 minutes, an average rideshare wait time
-    # TODO replace constant by average/median time in the matrix?
-    matrix = matrix / (5 * 60)
-    matrix = np.divide(1, matrix, where=matrix > 0)
-    matrix = np.nan_to_num(matrix)
-
-    if (np.isnan(matrix).any()):
-        print(matrix)
-        raise Exception(("matrix contains NA values"))
-
-
-
-    if return_routes:
-        return matrix, routes
-    else:
-        return matrix
+  # Only keep matches that could happen in a short enough amount of time
+    travel_times[travel_times >= threshold] = 0
+    matrix = (np.max(travel_times) - travel_times) / np.max(travel_times)
+    return matrix
 
 def _sample_partitioned_graph(m: int, n: int, rng: Generator, **kwargs):
     # Creates V_1 ... V_k ER graphs and interconnections with probability epsilon. Each

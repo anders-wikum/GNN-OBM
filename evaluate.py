@@ -297,18 +297,35 @@ class ParallelExecutionState:
             instance = (self.execution_states[i].A, self.execution_states[i].p, self.execution_states[i].noisy_A, self.execution_states[i].noisy_p)
             state.update(instance, -1, t)
 
+    def _compute_win_rates(self, OPT_matching, matching, win_rate_log):
+        m = self.execution_states[0].A.shape[0]
+        removed_nodes = [[] for _ in range(m)]
+        for (i, j) in matching:
+            for k in range(i+1, m):
+                removed_nodes[k].append(j)
+            
+        for (i, j) in OPT_matching:
+            if j not in removed_nodes[i]:
+                win_rate_log[i].append(int((i, j) in matching))
 
     def compute_competitive_ratios(self, baselines: List[str], **kwargs):
+        m = self.execution_states[0].A.shape[0]
+
         ratios = {
             "learned": np.zeros(
                 shape=(self.num_instances, self.num_realizations)
             )
         }
 
+        win_rate_log = {
+            "learned": [[] for _ in range(m)]
+        }
+
         for baseline in baselines:
             ratios[baseline] = np.zeros(
                 shape=(self.num_instances, self.num_realizations)
             )
+            win_rate_log[baseline] = [[] for _ in range(m)]
 
         for i, ex_state in enumerate(self.execution_states):
             A = ex_state.A
@@ -317,22 +334,44 @@ class ParallelExecutionState:
             noisy_p = ex_state.noisy_p
             for j, real_state in enumerate(ex_state.state_realizations):
                 coin_flips = real_state.coin_flips
-                OPT = dp.offline_opt(A, coin_flips)[1]
+                OPT_matching, OPT = dp.offline_opt(A, coin_flips)
+
                 if OPT > 0:
                     ratios["learned"][i, j] = real_state.value / OPT
+                    self._compute_win_rates(
+                        OPT_matching,
+                        real_state.matching,
+                        win_rate_log["learned"]
+                    )
                     for baseline in baselines:
-                        ratios[baseline][i, j] = \
-                            BASELINES[baseline]((A, p, noisy_A, noisy_p), real_state.coin_flips, **kwargs)[1] / OPT
+                        matching, value = BASELINES[baseline](
+                            (A, p, noisy_A, noisy_p),
+                            real_state.coin_flips,
+                            **kwargs
+                        )
+                        ratios[baseline][i, j] = value / OPT
+                        self._compute_win_rates(
+                            OPT_matching,
+                            matching,
+                            win_rate_log[baseline]
+                        )
                         
                 else:
                     ratios["learned"][i, j] = np.nan
                     for baseline in baselines:
-                        ratios[baseline][i,j] = np.nan
+                        ratios[baseline][i, j] = np.nan
 
-        return {
+        avg_ratios = {
             name: np.nanmean(ratio_matrix, axis=1)
             for (name, ratio_matrix) in ratios.items()
         }
+
+        win_rates = {
+            name: [np.mean(win_list) for win_list in log]
+            for (name, log) in win_rate_log.items()
+        }
+
+        return avg_ratios, win_rates
 
 
 def _select_base_model(meta_model, data) -> object:
@@ -457,19 +496,19 @@ def evaluate_model(
             num_models
         )
         
-        # choices = _compute_base_model_predictions(
-        #     base_models,
-        #     arrival_indices,
-        #     parallel_state,
-        #     batch_size
-        # )
-
-        choices = _compute_avg_predictions(
+        choices = _compute_base_model_predictions(
             base_models,
             arrival_indices,
             parallel_state,
             batch_size
         )
+
+        # choices = _compute_avg_predictions(
+        #     base_models,
+        #     arrival_indices,
+        #     parallel_state,
+        #     batch_size
+        # )
 
         parallel_state.update(t, choices, non_arrival_indices, arrival_indices)
 
