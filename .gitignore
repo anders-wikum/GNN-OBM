@@ -1,4 +1,6 @@
 **/data/
 **/__pycache__/*
+**/cache/
+**/gnn_library/__pycache__/
 **/*.pyc
 #**/trained_models/

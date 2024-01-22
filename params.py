@@ -18,7 +18,7 @@ SAMPLER_SPECS = {
     'GM': set([]),
     'FEAT': set(['q']),
     'PART': set(['p', 'k', 'eps']),
-    'OSMNX': set(['location_graph']),
+    'OSMNX': set(['location_info']),
 }
 
 
