@@ -7,6 +7,8 @@ from numpy.random import Generator
 from copy import copy
 import torch
 import math
+import matplotlib.pyplot as plt
+import scipy.stats as st 
 
 
 class Dataset(InMemoryDataset):
@@ -148,3 +150,36 @@ def _extract_batch(batch):
 
 def _flip_coins(p: _Array, rng: Generator) -> _Array:
     return np.vectorize(lambda x: rng.binomial(1, x))(p)
+
+
+def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph_type, confidence = 0.99):
+
+    for graph_type, comp_ratios in data.items():
+        aggregated_ratios = {}
+
+        for trial_ratios in comp_ratios:
+            for model, ratio_values in trial_ratios.items():
+                current_ratios = aggregated_ratios.get(model, [])
+                
+                # Compute the confidence interval for the competitive ratios
+                ci_lowerbound, ci_upperbound = st.norm.interval(alpha=confidence, 
+                                loc=np.mean(ratio_values), 
+                                scale=st.sem(ratio_values) / np.sqrt(len(ratio_values))) 
+                current_ratios.append((np.array(ratio_values).mean(), ci_lowerbound, ci_upperbound))
+                aggregated_ratios[model] = current_ratios
+
+        fig = plt.figure(figsize=(8,6))
+        for model, model_ratios in aggregated_ratios.items():
+            competitive_ratios = [val[0] for val in model_ratios]
+            ci_lowerbounds = [val[1] for val in model_ratios]
+            ci_upperbounds = [val[2] for val in model_ratios]
+            plt.plot(ratios, competitive_ratios, label=model)
+            plt.fill_between(ratios, ci_lowerbounds, ci_upperbounds, alpha = 0.2)
+
+        title = f"{naming_function(graph_type)}"
+        plt.title(title, fontsize = 18)
+        plt.xlabel('# online / # offline', fontsize = 15)
+        plt.ylabel('Average competitive ratio', fontsize = 15)
+        plt.legend()
+        plt.savefig(f"data/{title.replace(' ', '_')}.png")
+        plt.show()
