@@ -152,7 +152,7 @@ def _flip_coins(p: _Array, rng: Generator) -> _Array:
     return np.vectorize(lambda x: rng.binomial(1, x))(p)
 
 
-def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph_type, confidence = 0.99):
+def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph_type, x_axis_name = "# online / # offline", confidence = 0.99):
 
     for graph_type, comp_ratios in data.items():
         aggregated_ratios = {}
@@ -164,7 +164,7 @@ def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph
                 # Compute the confidence interval for the competitive ratios
                 ci_lowerbound, ci_upperbound = st.norm.interval(alpha=confidence, 
                                 loc=np.mean(ratio_values), 
-                                scale=st.sem(ratio_values) / np.sqrt(len(ratio_values))) 
+                                scale=st.sem(ratio_values)) 
                 current_ratios.append((np.array(ratio_values).mean(), ci_lowerbound, ci_upperbound))
                 aggregated_ratios[model] = current_ratios
 
@@ -178,8 +178,42 @@ def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph
 
         title = f"{naming_function(graph_type)}"
         plt.title(title, fontsize = 18)
-        plt.xlabel('# online / # offline', fontsize = 15)
-        plt.ylabel('Average competitive ratio', fontsize = 15)
+        plt.xlabel(x_axis_name, fontsize = 15)
+        plt.ylabel('Average Competitive Ratio', fontsize = 15)
+        plt.legend()
+        plt.savefig(f"data/{title.replace(' ', '_')}.png")
+        plt.show()
+
+def _box_plots(data, naming_function = lambda graph_type: graph_type, colors = None):
+
+    for graph_type, comp_ratios in data.items():
+        aggregated_ratios = {}
+        labels = comp_ratios.keys()
+        fig, ax = plt.subplots(figsize=(6, 6))
+        all_data = np.stack(comp_ratios.values()).T
+        print(all_data.shape)
+
+        # source: https://matplotlib.org/stable/gallery/statistics/boxplot_color.html#sphx-glr-gallery-statistics-boxplot-color-py
+        # rectangular box plot
+        bplot = ax.boxplot(all_data,
+                            vert=True,  # vertical box alignment
+                            patch_artist=True,  # fill with color
+                            showfliers=False,  # fill with color
+                            )
+        for median in bplot['medians']:
+            median.set_color('black')
+
+        # fill with colors
+        for patch, color in zip(bplot['boxes'], colors):
+            patch.set_facecolor(color)
+
+        # adding horizontal grid lines
+        ax.yaxis.grid(True)
+
+        title = f"{naming_function(graph_type)}"
+        ax.set_title(title, fontsize = 18)
+        ax.set_ylabel('Competitive Ratio', fontsize = 15)
+        ax.set_xticklabels(labels=labels, fontsize=15)
         plt.legend()
         plt.savefig(f"data/{title.replace(' ', '_')}.png")
         plt.show()

@@ -306,13 +306,11 @@ def _test(loader, test_model, loss_fn, acc_fn, device):
 
     return total_loss, total_accuracy
 
-
 def save(model: object, args: dict, name: str) -> None:
     path = MODEL_SAVE_FOLDER + name
     #filtered_args = {key: args[key] for key in REQ_ARGS[args['head']]}
     torch.save(model.state_dict(), path)
     pickle.dump(args, open(path + '_args.pickle', 'wb'))
-
 
 def load(name: str, device: str) -> object:
     path = MODEL_SAVE_FOLDER + name
