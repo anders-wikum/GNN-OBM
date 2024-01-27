@@ -309,7 +309,7 @@ def _add_noise_to_vector(array, rng, noise_std, clamp = True):
     noisy_array = torch.tensor(rng.normal(array, noise_std))
     if clamp:
         noisy_array = torch.clamp(noisy_array, 0, 1)
-    return noisy_array
+    return np.array(noisy_array)
 
 
 def sample_instances(
