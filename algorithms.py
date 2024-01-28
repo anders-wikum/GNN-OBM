@@ -231,8 +231,7 @@ def _validate_feasibility(x: _Array, p: _Array) -> _Array:
 
     return x
 
-def lp_match(instance: _Instance, verbose: Optional[bool] = False) -> _Array:
-    _, _, noisy_A, noisy_p = instance
+def lp_match(noisy_A, noisy_p, verbose: Optional[bool] = False) -> _Array:
     m, n = noisy_A.shape
     online_nodes = range(m)
     offline_nodes = range(n)
