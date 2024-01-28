@@ -9,6 +9,7 @@ import torch
 import math
 import matplotlib.pyplot as plt
 import scipy.stats as st 
+import pickle
 
 
 class Dataset(InMemoryDataset):
@@ -114,9 +115,13 @@ def _symmetrize(adj):
 def _neighbors(A: _Array, S: set, t: int) -> _Array:
     return [u for u in S if A[t, u] > 0]
 
+def _load_osmnx(location: str):
+    with open(f"data/OSMNX_{location}_travel_times.pickle", "rb") as handle:
+        location_info = pickle.load(handle)
+    return location_info
 
 def _load_gmission():
-    edge_df = pd.read_csv('./data/edges.txt', header=None)
+    edge_df = pd.read_csv('./data/g_mission/edges.txt', header=None)
     edge_df[['worker_type', 'task_type']
             ] = edge_df[0].str.split(';', expand=True)
     edge_df = edge_df \
@@ -164,7 +169,7 @@ def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph
                 # Compute the confidence interval for the competitive ratios
                 ci_lowerbound, ci_upperbound = st.norm.interval(alpha=confidence, 
                                 loc=np.mean(ratio_values), 
-                                scale=st.sem(ratio_values) / np.sqrt(len(ratio_values))) 
+                                scale=st.sem(ratio_values)) 
                 current_ratios.append((np.array(ratio_values).mean(), ci_lowerbound, ci_upperbound))
                 aggregated_ratios[model] = current_ratios
 

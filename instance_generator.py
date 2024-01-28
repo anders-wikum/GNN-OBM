@@ -1,5 +1,5 @@
 from params import SAMPLER_SPECS, GRAPH_TYPES, _Array, _Instance
-from util import _random_subset, _load_gmission
+from util import _random_subset, _load_gmission, _load_osmnx
 import numpy as np
 import torch
 import random
@@ -7,6 +7,7 @@ from numpy.random import Generator
 from typing import List, Tuple
 import osmnx as ox
 import networkx as nx
+import pickle
 
 
 def _add_uniform_weights(
@@ -126,11 +127,10 @@ def _sample_complete_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
     return rng.rand(m, n)
 
 
-# TODO Fix random generation for GMission graphs
 def _sample_gmission_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
-    edge_df = _load_gmission()
-    task_subset = random.sample(range(1, 712), m)
-    worker_subset = random.sample(range(1, 533), n)
+    edge_df = kwargs["data"]
+    task_subset = rng.choice(range(1, 712), m, replace=False)
+    worker_subset = rng.choice(range(1, 533), n, replace=False)
 
     subgraph_edges = edge_df[
         edge_df.worker_type.isin(worker_subset) &
@@ -139,7 +139,7 @@ def _sample_gmission_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
 
     A = np.array(
         subgraph_edges.pivot(
-            index='task_type', columns='worker_type', values='weight')
+            index="task_type", columns="worker_type", values="weight")
         .fillna(value=0)
         .reindex(columns=worker_subset, index=task_subset, fill_value=0)
     )
@@ -194,9 +194,8 @@ def _sample_feature_bipartite_graph(m: int, n: int, rng: Generator, **kwargs) ->
 def _sample_osmnx_graph(m: int, n: int, rng: Generator, **kwargs) -> _Array:
     # Give the location graph to avoid having to download it at each instance
     # The graph is expected to have travel times
-    location_info = kwargs.get('location_info')
-    intersections = location_info["intersections"]
-    drive_times = location_info["drive_times"]
+    intersections = kwargs["intersections"]
+    drive_times = kwargs["drive_times"]
 
     # Only keep matches if the driver can get to the user in less than 15 minutes
     threshold = kwargs.get('threshold', 15*60)
@@ -275,7 +274,36 @@ def _sample_bipartite_graph(
             f'{graph_type} graph type: {missing_names}'
         )
     
-    return SAMPLER_ROUTER[graph_type](m, n, rng, **kwargs)
+    batch_kwargs = _batch_kwargs(**kwargs)
+    
+    return SAMPLER_ROUTER[graph_type](m, n, rng, **batch_kwargs)
+
+def _gmission_batch_kwargs(**kwargs) -> dict:
+    kwargs['data'] = _load_gmission()
+    return kwargs
+
+def _osmnx_batch_kwargs(**kwargs) -> dict:
+    location = kwargs['location']
+    location_info = _load_osmnx(location)
+    for key in location_info.keys():
+        kwargs[key] = location_info[key]
+    return kwargs
+
+
+def _batch_kwargs(**kwargs):
+    KWARGS_ROUTER = {
+        'ER': lambda x: x,
+        'BA': lambda x: x,
+        'GEOM': lambda x: x,
+        'COMP': lambda x: x,
+        'FEAT': lambda x: x,
+        'PART': lambda x: x,
+        'GM': _gmission_batch_kwargs,
+        'OSMNX': _osmnx_batch_kwargs
+    }
+
+    graph_type = kwargs['graph_type']
+    return KWARGS_ROUTER[graph_type](**kwargs)
 
 
 def _sample_bipartite_graphs(
@@ -286,6 +314,7 @@ def _sample_bipartite_graphs(
     **kwargs
 ) -> List[_Array]:
     
+
     return [
         _sample_bipartite_graph(m, n, rng, **kwargs)
         for _ in range(num)
@@ -302,13 +331,13 @@ def _sample_probs(
     # return np.vstack([p for _ in range(num)]).T
     return rng.uniform(0, 1, (m, num))
 
-def _add_noise_to_vector(array, rng, noise_std, clamp = True):
+def _add_noise_to_vector(array, rng, noise_std, clip = True):
     # Adds random gaussian noise with std noise_std. If clamp is True
     # the result gets clamped between 0 and 1 (used for probability distributions
     # and weights since they are always bounded 
-    noisy_array = torch.tensor(rng.normal(array, noise_std))
-    if clamp:
-        noisy_array = torch.clamp(noisy_array, 0, 1)
+    noisy_array = rng.normal(array, noise_std)
+    if clip:
+        noisy_array = np.clip(noisy_array, 0, 1)
     return noisy_array
 
 
@@ -317,10 +346,9 @@ def sample_instances(
     n: int,
     num: int,
     rng: Generator,
-    args,
     **kwargs
 ) -> Tuple[List[_Instance], _Array]:
-    noise_std = args['noise']
+    noise_std = kwargs.get('noise', 0)
     As = _sample_bipartite_graphs(m, n, num, rng, **kwargs)
     noisy_As = [_add_noise_to_vector(A, rng, noise_std) for A in As]
     ps = _sample_probs(m, num, rng)
