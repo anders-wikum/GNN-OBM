@@ -332,6 +332,7 @@ class ParallelExecutionState:
             p = ex_state.p
             noisy_A = ex_state.noisy_A
             noisy_p = ex_state.noisy_p
+            
             for j, real_state in enumerate(ex_state.state_realizations):
                 coin_flips = real_state.coin_flips
                 OPT_matching, OPT = dp.offline_opt(A, coin_flips)

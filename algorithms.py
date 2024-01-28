@@ -231,17 +231,17 @@ def _validate_feasibility(x: _Array, p: _Array) -> _Array:
 
     return x
 
-def lp_match(A: _Array, p: _Array, verbose: Optional[bool] = False) -> _Array:
-
-    m, n = A.shape
+def lp_match(instance: _Instance, verbose: Optional[bool] = False) -> _Array:
+    _, _, noisy_A, noisy_p = instance
+    m, n = noisy_A.shape
     online_nodes = range(m)
     offline_nodes = range(n)
     indices = list(it.product(offline_nodes, online_nodes))
 
     model = gp.Model('LP-MATCH')
     x = _build_variables(model, indices)
-    _build_constraints(model, x, p, online_nodes, offline_nodes, indices)
-    _build_objective(model, x, A, indices)
+    _build_constraints(model, x, noisy_p, online_nodes, offline_nodes, indices)
+    _build_objective(model, x, noisy_A, indices)
    
     if not verbose:
         model.Params.LogToConsole = 0
@@ -271,9 +271,10 @@ def _compute_proposal_probs(x, p):
 def _vec_binomial(p: _Array):
     return np.array([np.random.binomial(1, pt) for pt in p]).astype(bool)
 
-def _online_lp_rounding(x, A, p, coin_flips):
-
-    proposal_probs = _compute_proposal_probs(x, p)
+def _online_lp_rounding(x, instance, coin_flips):
+    
+    A, _, noisy_A, noisy_p = instance
+    proposal_probs = _compute_proposal_probs(x, noisy_p)
     matching = []
     val = 0
     offline_mask = np.array(A.shape[1] * [True])
@@ -285,12 +286,12 @@ def _online_lp_rounding(x, A, p, coin_flips):
             valid_proposals = np.bitwise_and(offline_mask, proposals)
 
             if not np.all(valid_proposals == 0):
-                matched_node = np.argmax(np.multiply(A[t], valid_proposals))
+                matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
                 matching.append((t, matched_node))
                 val += A[t, matched_node]
                 offline_mask[matched_node] = 0
                 valid_proposals[matched_node] = 0
-                rejections = _vec_binomial(n * [p[t]])
+                rejections = _vec_binomial(n * [noisy_p[t]])
                 new_rejections = np.bitwise_and(
                     rejections,
                     valid_proposals
@@ -302,5 +303,5 @@ def _online_lp_rounding(x, A, p, coin_flips):
 
 
 def lp_approx(instance: _Instance, coin_flips: _Array, **kwargs):
-    x, _ = lp_match(*instance, verbose=False)
-    return _online_lp_rounding(x, *instance, coin_flips)
+    x, _ = lp_match(instance, verbose=False)
+    return _online_lp_rounding(x, instance, coin_flips)
