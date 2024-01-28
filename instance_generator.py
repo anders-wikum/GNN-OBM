@@ -76,51 +76,23 @@ def _sample_geom_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
     edge weights are scaled by a factor of [scaling] as a final step.
     '''
 
-    threshold = kwargs.get('threshold', 0.25)
-    scaling = kwargs.get('scaling', 1.0)
-    partition = kwargs.get('partition', 5)
-    width = 1 / partition
-    power = kwargs.get('power', 1)
+    q = kwargs.get('q', 0.25)
+    d = kwargs.get('d', 2)
+    weighted = kwargs.get('weighted', True)
 
-    red_rates = rng.power(power, (partition, partition))
-    blue_rates = rng.power(power, (partition, partition))
-    red_rates = (red_rates / np.sum(red_rates)).flatten()
-    blue_rates = (blue_rates / np.sum(blue_rates)).flatten()
-
-    bounds = [
-        ((1 - (i + 1) * width, 1 - i * width),
-         (1 - (j + 1) * width, 1 - j * width))
-        for j in np.arange(partition)
-        for i in np.arange(partition)
-    ]
-
-    red_ind = rng.choice(
-        np.arange(partition * partition), m, p=red_rates)
-    blue_ind = rng.choice(
-        np.arange(partition * partition), n, p=blue_rates)
-
-    red = []
-    blue = []
-
-    for i in red_ind:
-        red.append(
-            [rng.uniform(*bounds[i][0]),
-             rng.uniform(*bounds[i][1])]
-        )
-    for i in blue_ind:
-        blue.append(
-            [rng.uniform(*bounds[i][0]),
-             rng.uniform(*bounds[i][1])]
-        )
-
-    red = np.array(red)
-    blue = np.array(blue)
-
-    # m x n matrix with pairwise euclidean distances
-    dist = np.linalg.norm(red[:, None, :] - blue[None, :, :], axis=-1)
+    red = rng.uniform(0, 1, (d, m))
+    blue = rng.uniform(0, 1, (d, n))
+    dist = np.linalg.norm(blue[:, None, :] - red[:, :, None], axis=0)
+    
+    #dist[dist > threshold] = 0
+    dist = (np.max(dist) - dist) / np.max(dist)
+    threshold = np.quantile(dist.flatten(), 1-q)
     dist[dist < threshold] = 0
 
-    return scaling * dist
+    if not weighted:
+        return(dist > 0).astype(float)
+    
+    return dist
 
 
 def _sample_complete_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
@@ -289,15 +261,17 @@ def _osmnx_batch_kwargs(**kwargs) -> dict:
         kwargs[key] = location_info[key]
     return kwargs
 
+def _indentity_batch_kwargs(**kwargs) -> dict:
+    return kwargs
 
 def _batch_kwargs(**kwargs):
     KWARGS_ROUTER = {
-        'ER': lambda x: x,
-        'BA': lambda x: x,
-        'GEOM': lambda x: x,
-        'COMP': lambda x: x,
-        'FEAT': lambda x: x,
-        'PART': lambda x: x,
+        'ER': _indentity_batch_kwargs,
+        'BA': _indentity_batch_kwargs,
+        'GEOM': _indentity_batch_kwargs,
+        'COMP': _indentity_batch_kwargs,
+        'FEAT': _indentity_batch_kwargs,
+        'PART': _indentity_batch_kwargs,
         'GM': _gmission_batch_kwargs,
         'OSMNX': _osmnx_batch_kwargs
     }
@@ -346,6 +320,7 @@ def sample_instances(
     n: int,
     num: int,
     rng: Generator,
+    args,
     **kwargs
 ) -> Tuple[List[_Instance], _Array]:
     noise_std = kwargs.get('noise', 0)

@@ -13,7 +13,7 @@ GRAPH_TYPES = ['GEOM', 'ER', 'BA', 'COMP', 'GM', 'FEAT', 'PART', 'OSMNX']
 GROUP_SAMPLERS = ['GM', 'OSMNX']
 
 SAMPLER_SPECS = {
-    'GEOM': set(['threshold', 'scaling']),
+    'GEOM': set(['q', 'd']),
     'ER': set(['p', 'weighted']),
     'BA': set(['ba_param', 'weighted']),
     'COMP': set([]),
