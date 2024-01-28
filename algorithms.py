@@ -271,13 +271,12 @@ def _compute_proposal_probs(x, p):
 def _vec_binomial(p: _Array):
     return np.array([np.random.binomial(1, pt) for pt in p]).astype(bool)
 
-def _online_lp_rounding(x, instance, coin_flips):
-    
-    A, _, noisy_A, noisy_p = instance
+def _online_lp_rounding(x, A, p, noisy_A, noisy_p, coin_flips):
+
     proposal_probs = _compute_proposal_probs(x, noisy_p)
     matching = []
     val = 0
-    offline_mask = np.array(A.shape[1] * [True])
+    offline_mask = np.array(noisy_A.shape[1] * [True])
     m, n = x.shape
     
     for t in range(m):
@@ -286,6 +285,7 @@ def _online_lp_rounding(x, instance, coin_flips):
             valid_proposals = np.bitwise_and(offline_mask, proposals)
 
             if not np.all(valid_proposals == 0):
+                matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
                 matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
                 matching.append((t, matched_node))
                 val += A[t, matched_node]
@@ -303,5 +303,6 @@ def _online_lp_rounding(x, instance, coin_flips):
 
 
 def lp_approx(instance: _Instance, coin_flips: _Array, **kwargs):
-    x, _ = lp_match(instance, verbose=False)
-    return _online_lp_rounding(x, instance, coin_flips)
+    _, _, noisy_A, noisy_p = instance
+    x, _ = lp_match(noisy_A, noisy_p, verbose=False)
+    return _online_lp_rounding(x, *instance, coin_flips)
