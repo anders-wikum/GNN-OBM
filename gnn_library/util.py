@@ -322,3 +322,86 @@ def load(name: str, device: str) -> object:
     model.to(device)
     model.eval()
     return model, args
+
+
+# GNN1 eval 
+node_configs_gnn1 = [(10,16), (10,20), (10,30), (10,60)]
+node_configs_gnn1 = [(16,10), (20,10), (30,10), (60,10)]
+graph_configs_standard = [
+    {
+        'graph_type': 'ER',
+        'p': 0.75,
+        'weighted': True
+    },
+    {
+        'graph_type': 'ER',
+        'p': 0.5,
+        'weighted': True
+    },
+    {
+        'graph_type': 'ER',
+        'p': 0.9,
+        'weighted': True
+    },
+    {
+        'graph_type': 'BA',
+        'ba_param': 4,
+        'weighted': True
+    },
+    {
+        'graph_type': 'BA',
+        'ba_param': 6,
+        'weighted': True
+    },
+    {
+        'graph_type': 'BA',
+        'ba_param': 8,
+        'weighted': True
+    },
+    {
+        'graph_type': 'FEAT',
+        'q': 0.5,
+        'weighted': True
+    },
+    {
+        'graph_type': 'FEAT',
+        'q': 0.75,
+        'weighted': True
+    },
+    {
+        'graph_type': 'FEAT',
+        'q': 0.85,
+        'weighted': True
+    },
+    {
+        'graph_type': 'FEAT',
+        'q': 0.9,
+        'weighted': True
+    },
+]
+
+import osmnx as ox
+def get_location_graph(city):
+	location_graph = ox.graph_from_place(city, network_type="drive")
+	location_graph = ox.speed.add_edge_speeds(location_graph)
+	location_graph = ox.speed.add_edge_travel_times(location_graph)
+	return {'location_graph': location_graph, 'city': city}
+
+piedmont = get_location_graph("Piedmont, California, USA")
+fremont = get_location_graph("Fremont, Switzerland")
+# geneva = get_location_graph("Geneva, Switzerland")
+
+graph_configs_rideshare = [
+    {
+        'graph_type': 'OSMNX',
+        'location_graph': piedmont['location_graph']
+    },
+    {
+        'graph_type': 'OSMNX',
+        'location_graph': fremont['location_graph']
+    },
+]
+
+graph_configs_gMission = [
+
+]
