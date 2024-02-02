@@ -534,29 +534,3 @@ graph_config6 = [
         'graph_type': 'GM'
     }
 ]
-
-import osmnx as ox
-def get_location_graph(city):
-	location_graph = ox.graph_from_place(city, network_type="drive")
-	location_graph = ox.speed.add_edge_speeds(location_graph)
-	location_graph = ox.speed.add_edge_travel_times(location_graph)
-	return {'location_graph': location_graph, 'city': city}
-
-piedmont = get_location_graph("Piedmont, California, USA")
-fremont = get_location_graph("Fremont, California, USA")
-# geneva = get_location_graph("Geneva, Switzerland")
-
-graph_configs_rideshare = [
-    {
-        'graph_type': 'OSMNX',
-        'location_graph': piedmont['location_graph']
-    },
-    {
-        'graph_type': 'OSMNX',
-        'location_graph': fremont['location_graph']
-    },
-]
-
-graph_configs_gMission = [
-
-]
