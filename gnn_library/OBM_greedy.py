@@ -1,7 +1,7 @@
 import torch
 from util import Dataset
 
-def _greedy_choices(batch: Dataset) -> torch.Tensor:
+def _greedy_choices(batch: Dataset, t: float) -> torch.Tensor:
     try:
         batch_size = batch.ptr.size(dim=0) - 1
     except:
@@ -18,7 +18,6 @@ def _greedy_choices(batch: Dataset) -> torch.Tensor:
         neighbor_nodes = all_nodes[
             batch.neighbors[i * nodes_per_graph : (i + 1) * nodes_per_graph]
         ]
-        # print(t, neighbor_nodes)
 
         adj_values = batch.edge_attr[
             (batch.edge_index[0, :] == arr_node) & 
@@ -27,12 +26,10 @@ def _greedy_choices(batch: Dataset) -> torch.Tensor:
                 neighbor_nodes + i * nodes_per_graph
             )
         ]
-        # print(adj_values)
         
-        if adj_values.size(dim=0) > 0:
+        if adj_values.size(dim=0) > 0 and torch.max(adj_values) >= t:
             choices[:, i] = neighbor_nodes[torch.argmax(adj_values, dim=0)]
     
-    # print()
     return torch.where(choices < batch.n, choices, -1)[0]
 
 
@@ -43,7 +40,7 @@ class OBM_Greedy(torch.nn.Module):
     for easy comparison to neural net-based approaches.
     """
 
-    def __init__(self):
+    def __init__(self, t):
         """
         Initializing the GNN
         Args:
@@ -51,6 +48,7 @@ class OBM_Greedy(torch.nn.Module):
         """
         super(OBM_Greedy, self).__init__()
         self.eval()
+        self.t = t
 
     def reset_parameters(self):
         pass
@@ -72,6 +70,6 @@ class OBM_Greedy(torch.nn.Module):
             for batch in batches:
                 batch.to('cpu')
                 pred = torch.zeros((1, batch.x.shape[0]))
-                pred[0, _greedy_choices(batch)] = 1
+                pred[0, _greedy_choices(batch, self.t)] = 1
                 predictions.append(pred)
             return torch.cat(predictions)

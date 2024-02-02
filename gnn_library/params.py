@@ -1,24 +1,13 @@
 from .OBM_GENConv import OBM_GENConv
-from .OBM_NNConv import OBM_NNConv
-from .OBM_multiclass import GraphClassifier
-#from .OBM_ff_invariant import OBM_ff_invariant
-from .sandbox import OBM_class, DeeperGCN, GATv2Conv, NNConvSandbox, TransformerConvSandbox
-
+from .OBM_deeperGCN import DeeperGCN
 
 NETWORKS = {
     'GENConv': OBM_GENConv,
-    'NNConv': OBM_NNConv,
-    'NN': GraphClassifier,
-    'TEST': OBM_class,
-    'TEST2': DeeperGCN,
-    'TEST3': GATv2Conv,
-    'TEST4': NNConvSandbox,
-    'TEST5': TransformerConvSandbox,
-    #'invFF': OBM_ff_invariant
+    'DeeperGCN': DeeperGCN
 }
 
-#TODO: Make this an absolute path so that it can be called from anywhere
 MODEL_SAVE_FOLDER = './trained_models/'
+
 REQ_ARGS = {
     'regression': [
         'processor',
@@ -56,3 +45,7 @@ REQ_ARGS = {
         'device'
     ]
 }
+
+GRAPH_CONFIGS = [
+
+]
