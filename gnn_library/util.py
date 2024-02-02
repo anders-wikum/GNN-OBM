@@ -1,18 +1,25 @@
 import torch
 import pickle
 import copy
-
+import optuna
+import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-
+from torch_geometric.data import InMemoryDataset
 from torch_geometric.loader import DataLoader
 from tqdm import trange
-from .params import NETWORKS, REQ_ARGS, MODEL_SAVE_FOLDER
+from .params import NETWORKS, MODEL_SAVE_FOLDER
 from util import objectview
 from typing import Optional
+from instance_generator import sample_instances
+from torch_converter import _instances_to_train_samples
 
-import optuna
+
+class Dataset(InMemoryDataset):
+    def __init__(self, data_list):
+        super().__init__(None)
+        self.data, self.slices = self.collate(data_list)
 
 
 class MaskedMSELoss(nn.Module):
@@ -53,36 +60,15 @@ class pygCrossEntropyLoss(nn.Module):
         pred_per_graph = pred[neighbor_mask].squeeze(dim=1).T
         batch_index = batch.batch[neighbor_mask]
 
-        # print(f"pred: {pred.shape}")
-        # print(f"batch: {batch.batch.shape}")
-        # print(batch.batch[neighbor_mask].shape)
-
-        # print(f"pred per graph before where: {pred_per_graph.shape}")
-        # print(f"hints per graph before where: {hints.shape}")
-
         # Get the predicted node per graph
         mask = torch.arange(len(torch.unique(batch.batch))).unsqueeze(1).to(pred_per_graph.device) == batch_index.unsqueeze(0)
         pred_per_graph = torch.where(mask, pred_per_graph, float('-inf'))
-
-        # print(f"pred per graph before sig: {pred_per_graph.shape}")
 
         # Create an array that is 1 only 
         maximizers = torch.argmax(torch.where(mask, hints.unsqueeze(0), float('-inf')), dim=1)
         hints_per_graph = torch.zeros_like(pred_per_graph)
         hints_per_graph[torch.arange(maximizers.shape[0]), maximizers] = 1
-        
-        # Pass predictions through a sigmoid
-        # print(f"mask shape {mask.shape}")
-        # print(f"hints per graph: {hints_per_graph.shape}")
         pred_per_graph = sig(pred_per_graph)
-
-        # print(pred_per_graph.shape)
-        # print(batch.hint)
-
-        #print(torch.argmax(batch.hint.view(-1, C), dim=1), pred)
-        # first_elems = torch.nonzero(mask)
-        # print(mask)
-        # print(first_elems)
 
         return criterion(
             pred_per_graph,
@@ -97,22 +83,10 @@ class metaCrossEntropyLoss(nn.Module):
 
     def forward(self, pred, batch):
         C = pred.size(dim=1)
-        # return F.mse_loss(pred.flatten(), batch.hint)
-        #print(torch.argmax(batch.hint.view(-1, C), dim=1), pred)
         return F.cross_entropy(
             pred,
             batch.hint.view(-1, C)
         )
-    
-
-class torchCrossEntropyLoss(nn.Module):
-
-    def __init__(self):
-        super(torchCrossEntropyLoss, self).__init__()
-
-    def forward(self, pred, batch):
-        (_, y) = batch
-        return F.binary_cross_entropy_with_logits(pred, y)
 
 
 def build_optimizer(args, params):
@@ -151,10 +125,7 @@ def _get_loss(args):
     elif args.head == 'classification':
         return pygCrossEntropyLoss()
     elif args.head == 'meta':
-        if args.processor == 'NN':
-            return torchCrossEntropyLoss()
-        else:
-            return metaCrossEntropyLoss()
+        return metaCrossEntropyLoss()
     else:
         raise NotImplemented
 
@@ -321,11 +292,12 @@ def _test(loader, test_model, loss_fn, acc_fn, device):
 
     return total_loss, total_accuracy
 
+
 def save(model: object, args: dict, name: str) -> None:
     path = MODEL_SAVE_FOLDER + name
-    #filtered_args = {key: args[key] for key in REQ_ARGS[args['head']]}
     torch.save(model.state_dict(), path)
     pickle.dump(args, open(path + '_args.pickle', 'wb'))
+
 
 def load(name: str, device: str) -> object:
     path = MODEL_SAVE_FOLDER + name
@@ -337,3 +309,254 @@ def load(name: str, device: str) -> object:
     model.to(device)
     model.eval()
     return model, args
+
+
+def gen_train_input(train_config: dict, args: dict, seed: int, base_models: Optional[list]):
+    rng = np.random.default_rng(seed)
+    train_instances = [
+        instance
+        for config in train_config['configs']
+        for (m, n) in train_config['regimes']
+        for instance in sample_instances(
+            m,
+            n,
+            train_config['train_num'],
+            rng,
+            args,
+            **config
+        )
+    ]
+
+    val_instances = [
+        instance
+        for config in train_config['configs']
+        for (m, n) in train_config['regimes']
+        for instance in sample_instances(
+            m,
+            n,
+            train_config['val_num'],
+            rng,
+            args,
+            **config
+        )
+    ]
+
+    train_data = Dataset(
+        _instances_to_train_samples(
+            instances=train_instances,
+            head=args['head'],
+            base_models=base_models
+        )
+    )
+
+    val_data = Dataset(
+        _instances_to_train_samples(
+            instances=val_instances,
+            head=args['head'],
+            base_models=base_models
+        )
+    )
+
+    train_loader = DataLoader(
+        train_data,
+        batch_size=args['batch_size'],
+        shuffle=True,
+        num_workers=4
+    )
+
+    val_loader = DataLoader(
+        val_data,
+        batch_size=args['batch_size'],
+        shuffle=True,
+        num_workers=4
+    )
+
+    return train_loader, val_loader
+
+
+# GNN1 eval 
+node_configs_gnn1 = [(10,16), (10,20), (10,30), (10,60)]
+node_configs_gnn2 = [(16,10), (20,10), (30,10), (60,10)]
+node_configs_gnn = [(30,10)]
+# node_configs_gnn = [(10,10), (20,20)]
+graph_configs_standard = [
+    {
+        'graph_type': 'ER',
+        'p': 0.25,
+        'weighted': True
+    },
+    {
+        'graph_type': 'ER',
+        'p': 0.5,
+        'weighted': True
+    },
+    {
+        'graph_type': 'ER',
+        'p': 0.75,
+        'weighted': True
+    },
+    {
+        'graph_type': 'BA',
+        'ba_param': 4,
+        'weighted': True
+    },
+    {
+        'graph_type': 'BA',
+        'ba_param': 6,
+        'weighted': True
+    },
+    {
+        'graph_type': 'BA',
+        'ba_param': 8,
+        'weighted': True
+    },
+    {
+        'graph_type': 'GEOM',
+        'q': 0.15,
+        'd': 2,
+        'weighted': True
+    },
+     {
+        'graph_type': 'GEOM',
+        'q': 0.25,
+        'd': 2,
+        'weighted': True
+    },
+    {
+        'graph_type': 'GEOM',
+        'q': 0.5,
+        'd': 2,
+        'weighted': True
+    },
+    {
+        'graph_type': 'OSMNX',
+        'location': 'Piedmont, California, USA'
+    },
+    {
+        'graph_type': 'OSMNX',
+        'location': 'Fremont, California, USA'
+    },
+    {
+        'graph_type': 'GM'
+    }
+
+]
+
+graph_configs_main = [
+    {
+        'graph_type': 'ER',
+        'p': 0.5,
+        'weighted': True
+    },
+    {
+        'graph_type': 'GEOM',
+        'q': 0.25,
+        'd': 2,
+        'weighted': True
+    },
+    {
+        'graph_type': 'OSMNX',
+        'location': 'Fremont, California, USA'
+    },
+    {
+        'graph_type': 'GM'
+    }
+]
+graph_config1 = [
+    {
+        'graph_type': 'ER',
+        'p': 0.25,
+        'weighted': True
+    },
+    {
+        'graph_type': 'ER',
+        'p': 0.5,
+        'weighted': True
+    },
+]
+graph_config2 = [
+    {
+        'graph_type': 'ER',
+        'p': 0.75,
+        'weighted': True
+    },
+    {
+        'graph_type': 'BA',
+        'ba_param': 4,
+        'weighted': True
+    },
+]
+graph_config3 = [
+    {
+        'graph_type': 'BA',
+        'ba_param': 6,
+        'weighted': True
+    },
+    {
+        'graph_type': 'BA',
+        'ba_param': 8,
+        'weighted': True
+    },
+]
+graph_config4 = [
+    {
+        'graph_type': 'GEOM',
+        'q': 0.15,
+        'd': 2,
+        'weighted': True
+    },
+     {
+        'graph_type': 'GEOM',
+        'q': 0.25,
+        'd': 2,
+        'weighted': True
+    },
+]
+
+graph_config5 = [
+    {
+        'graph_type': 'GEOM',
+        'q': 0.5,
+        'd': 2,
+        'weighted': True
+    },
+    {
+        'graph_type': 'OSMNX',
+        'location': 'Piedmont, California, USA'
+    },
+]
+graph_config6 = [
+    {
+        'graph_type': 'OSMNX',
+        'location': 'Fremont, California, USA'
+    },
+    {
+        'graph_type': 'GM'
+    }
+]
+
+import osmnx as ox
+def get_location_graph(city):
+	location_graph = ox.graph_from_place(city, network_type="drive")
+	location_graph = ox.speed.add_edge_speeds(location_graph)
+	location_graph = ox.speed.add_edge_travel_times(location_graph)
+	return {'location_graph': location_graph, 'city': city}
+
+piedmont = get_location_graph("Piedmont, California, USA")
+fremont = get_location_graph("Fremont, California, USA")
+# geneva = get_location_graph("Geneva, Switzerland")
+
+graph_configs_rideshare = [
+    {
+        'graph_type': 'OSMNX',
+        'location_graph': piedmont['location_graph']
+    },
+    {
+        'graph_type': 'OSMNX',
+        'location_graph': fremont['location_graph']
+    },
+]
+
+graph_configs_gMission = [
+
+]

@@ -1,13 +1,9 @@
 from params import SAMPLER_SPECS, GRAPH_TYPES, _Array, _Instance
 from util import _random_subset, _load_gmission, _load_osmnx
 import numpy as np
-import torch
-import random
 from numpy.random import Generator
 from typing import List, Tuple
-import osmnx as ox
-import networkx as nx
-import pickle
+
 
 
 def _add_uniform_weights(
@@ -120,50 +116,6 @@ def _sample_gmission_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
     return A
 
 
-def _location_feature(num_points: int, rng: Generator) -> _Array:
-    return rng.uniform(0, 1, size=(num_points, 2))
-
-def _rating_feature(num_points: int, rng: Generator) -> _Array:
-    return rng.choice([0.2, 0.4, 0.6, 0.8, 1], size=(num_points, 1))
-    #return np.zeros((num_points, 1))
-
-def _sample_synthetic_features(m: int, n: int, rng: Generator) -> _Array:
-    loc_m = _location_feature(m, rng)
-    rat_m = _rating_feature(m, rng)
-
-    loc_n = _location_feature(n, rng)
-    rat_n = _rating_feature(n, rng)
-
-    return np.hstack([loc_m, rat_m]), np.hstack([loc_n, rat_n])
-
-def _sample_feature_bipartite_graph(m: int, n: int, rng: Generator, **kwargs) -> _Array:
-    M, N = _sample_synthetic_features(m, n, rng)
-    q = kwargs.get('q', 0.9)
-
-    weighted = kwargs.get('weighted', False)
-    ret_features = kwargs.get('ret_features', False)
-
-    denom = np.linalg.norm(M, axis = -1, keepdims=True) @ np.linalg.norm(N, axis = -1, keepdims=True).T
-    score_matrix = M @ N.T / denom
-
-    threshold = np.quantile(score_matrix.flatten(), q)
-    #threshold = q
-    graph_matrix = (score_matrix >= threshold).astype(float)
-
-    if weighted:
-        # TODO remove these 4 lines if not doing independent ratings for weights
-        M = _rating_feature(m, rng)
-        N = _rating_feature(n, rng)
-        denom = np.linalg.norm(M, axis = -1, keepdims=True) @ np.linalg.norm(N, axis = -1, keepdims=True).T
-        score_matrix = M @ N.T / denom
-
-        graph_matrix = np.multiply(graph_matrix, score_matrix)
-
-    if ret_features:
-        return graph_matrix, M, N
-    else:
-        return graph_matrix
-
 def _sample_osmnx_graph(m: int, n: int, rng: Generator, **kwargs) -> _Array:
     # Give the location graph to avoid having to download it at each instance
     # The graph is expected to have travel times
@@ -190,32 +142,6 @@ def _sample_osmnx_graph(m: int, n: int, rng: Generator, **kwargs) -> _Array:
     matrix = (np.max(travel_times) - travel_times) / np.max(travel_times)
     return matrix
 
-def _sample_partitioned_graph(m: int, n: int, rng: Generator, **kwargs):
-    # Creates V_1 ... V_k ER graphs and interconnections with probability epsilon. Each
-    # partition V_i is an ER graph
-
-    p = kwargs.get('p', 0.5)
-    k = kwargs['k']
-    # size is the size that each partition should roughly have
-    eps = kwargs['eps']
-
-    mat = np.zeros((m, n))
-    # Increments for offline/online nodes
-    m_inc = m // k
-    n_inc = n // k
-    for i in range(k - 1):
-        mat[m_inc*i : m_inc*(i+1), n_inc*i : n_inc*(i+1)] = rng.binomial(1, p, size=(m//k, n//k))
-    # Remainder (since k does not necessarily divide m or n)
-    m_rem = m - (k - 1) * m_inc
-    n_rem = n - (k - 1) * n_inc
-    mat[m_inc*(k-1) : m, n_inc*(k - 1) : n] = rng.binomial(1, p, size=(m_rem, n_rem))
-
-    # Adding any fixed edge with probability epsilon
-    eps_mat = rng.binomial(1, eps, size=(m, n))
-    mat = np.logical_or(mat, eps_mat)
-
-    return mat
-
 
 def _sample_bipartite_graph(
     m: int,
@@ -229,8 +155,6 @@ def _sample_bipartite_graph(
         'GEOM': _sample_geom_bipartite_graph,
         'COMP': _sample_complete_bipartite_graph,
         'GM': _sample_gmission_bipartite_graph,
-        'FEAT': _sample_feature_bipartite_graph,
-        'PART': _sample_partitioned_graph,
         'OSMNX': _sample_osmnx_graph
     }
 
@@ -251,9 +175,11 @@ def _sample_bipartite_graph(
     
     return SAMPLER_ROUTER[graph_type](m, n, rng, **batch_kwargs)
 
+
 def _gmission_batch_kwargs(**kwargs) -> dict:
     kwargs['data'] = _load_gmission()
     return kwargs
+
 
 def _osmnx_batch_kwargs(**kwargs) -> dict:
     location = kwargs['location']
@@ -262,8 +188,10 @@ def _osmnx_batch_kwargs(**kwargs) -> dict:
         kwargs[key] = location_info[key]
     return kwargs
 
+
 def _indentity_batch_kwargs(**kwargs) -> dict:
     return kwargs
+
 
 def _batch_kwargs(**kwargs):
     KWARGS_ROUTER = {
@@ -271,8 +199,6 @@ def _batch_kwargs(**kwargs):
         'BA': _indentity_batch_kwargs,
         'GEOM': _indentity_batch_kwargs,
         'COMP': _indentity_batch_kwargs,
-        'FEAT': _indentity_batch_kwargs,
-        'PART': _indentity_batch_kwargs,
         'GM': _gmission_batch_kwargs,
         'OSMNX': _osmnx_batch_kwargs
     }
@@ -326,7 +252,13 @@ def sample_instances(
 ) -> Tuple[List[_Instance], _Array]:
     noise_std = args.get('noise', 0)
     As = _sample_bipartite_graphs(m, n, num, rng, **kwargs)
-    noisy_As = [_add_noise_to_vector(A, rng, noise_std) for A in As]
+
+    def _add_noise_if_nonzero(A, rng, noise_std):
+        noisy_A = _add_noise_to_vector(A, rng, noise_std)
+        noisy_A[A == 0] = 0
+        return noisy_A
+
+    noisy_As = [_add_noise_if_nonzero(A, rng, noise_std) for A in As]
     ps = _sample_probs(m, num, rng)
     noisy_ps = _add_noise_to_vector(ps, rng, noise_std)
     instances = [

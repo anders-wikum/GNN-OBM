@@ -51,7 +51,7 @@ def _gen_node_features(m: int, n: int, p: _Array, t: int, rng: Generator):
 
 
 
-def _gen_edge_tensors(A: _Array, A_values: _Array) -> Tuple[torch.tensor, torch.tensor]:
+def _gen_edge_features(A: _Array, A_values: _Array) -> Tuple[torch.tensor, torch.tensor]:
     # A is used to decide if an edge is added, A_values is used
     # to add the values to edge_attr. This is useful to use noisy
     # weight values 
@@ -108,7 +108,7 @@ def init_pyg(
     t = 0
 
     x = _gen_node_features(m, n, noisy_p, t, rng)
-    edge_index, edge_attr = _gen_edge_tensors(A, noisy_A)
+    edge_index, edge_attr = _gen_edge_features(A, noisy_A)
 
     neighbors = _neighbor_encoder(A, offline_nodes, t)
     graph_features = _gen_graph_features(m, n, offline_nodes, t)
@@ -208,10 +208,6 @@ def update_pyg(
 def label_pyg(data: Data, y: _Array) -> Data:
     data.hint = torch.FloatTensor(y)
     return deepcopy(data)
-
-
-def _2d_normalize(arr: _Array):
-    return (arr - arr.mean()) / arr.std()
 
 
 def _marginal_vtg(instance, offline_nodes, t, cache, **kwargs):
