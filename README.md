@@ -1,4 +1,4 @@
-# MAGNOLIA
+# MAGNOLIA: Matching Algorithms via GNNs for Online Value-to-go Approximation
 
 Please run the cells in `notebooks/osmnx_generator.ipynb`to enable generation 
 of graph inputs from OSMnx -- this may take a few minutes.
@@ -6,7 +6,7 @@ of graph inputs from OSMnx -- this may take a few minutes.
 ## Repository overview
 
 Code for all experiments can be found in the `/notebooks/` directory. Experiment 
-files follow the naming convention "exp_{experiment name}". GNN and greedy-t 
+files follow the naming convention "exp_[experiment name]". GNN and greedy-t 
 hyperparameter tuning can be found in `/notebooks/gnn_tuner.ipynb` and 
 `/notebooks/greedy_tuner.ipynb`, respectively.
 
