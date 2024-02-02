@@ -15,6 +15,7 @@ from params import _Array, _Instance
 _ModelIndex = Tuple[int, int]
 BASELINES = {
     'greedy': dp.greedy,
+    'greedy_t': dp.threshold_greedy,
     'lp_rounding': dp.lp_approx
 }
 
@@ -133,9 +134,7 @@ class ParallelExecutionState:
             for execution_state in self.execution_states
             for realized_state in execution_state.state_realizations
         ])
-        if meta_model is None:
-            return np.zeros(len(online_offline_ratios)).astype(int)
-        return (online_offline_ratios < 1.5).astype(int)
+        return (online_offline_ratios > 1.5).astype(int)
     
 
     def _hybrid_model_assign(
@@ -297,16 +296,6 @@ class ParallelExecutionState:
             instance = (self.execution_states[i].A, self.execution_states[i].p, self.execution_states[i].noisy_A, self.execution_states[i].noisy_p)
             state.update(instance, -1, t)
 
-    def _compute_win_rates(self, OPT_matching, matching, win_rate_log):
-        m = self.execution_states[0].A.shape[0]
-        removed_nodes = [[] for _ in range(m)]
-        for (i, j) in matching:
-            for k in range(i+1, m):
-                removed_nodes[k].append(j)
-            
-        for (i, j) in OPT_matching:
-            if j not in removed_nodes[i]:
-                win_rate_log[i].append(int((i, j) in matching))
 
     def compute_competitive_ratios(self, baselines: List[str], **kwargs):
         m = self.execution_states[0].A.shape[0]
@@ -317,15 +306,10 @@ class ParallelExecutionState:
             )
         }
 
-        win_rate_log = {
-            "learned": [[] for _ in range(m)]
-        }
-
         for baseline in baselines:
             ratios[baseline] = np.zeros(
                 shape=(self.num_instances, self.num_realizations)
             )
-            win_rate_log[baseline] = [[] for _ in range(m)]
 
         for i, ex_state in enumerate(self.execution_states):
             A = ex_state.A
@@ -335,27 +319,17 @@ class ParallelExecutionState:
             
             for j, real_state in enumerate(ex_state.state_realizations):
                 coin_flips = real_state.coin_flips
-                OPT_matching, OPT = dp.offline_opt(A, coin_flips)
+                _, OPT = dp.offline_opt(A, coin_flips)
 
                 if OPT > 0:
                     ratios["learned"][i, j] = real_state.value / OPT
-                    self._compute_win_rates(
-                        OPT_matching,
-                        real_state.matching,
-                        win_rate_log["learned"]
-                    )
                     for baseline in baselines:
-                        matching, value = BASELINES[baseline](
+                        _, value = BASELINES[baseline](
                             (A, p, noisy_A, noisy_p),
                             real_state.coin_flips,
-                            **kwargs
+                            **kwargs[baseline]
                         )
                         ratios[baseline][i, j] = value / OPT
-                        self._compute_win_rates(
-                            OPT_matching,
-                            matching,
-                            win_rate_log[baseline]
-                        )
                         
                 else:
                     ratios["learned"][i, j] = np.nan
@@ -363,16 +337,11 @@ class ParallelExecutionState:
                         ratios[baseline][i, j] = np.nan
 
         avg_ratios = {
-            name: np.nanmean(ratio_matrix, axis=1)
+            name: list(np.nanmean(ratio_matrix, axis=1))
             for (name, ratio_matrix) in ratios.items()
         }
 
-        win_rates = {
-            name: [np.mean(win_list) for win_list in log]
-            for (name, log) in win_rate_log.items()
-        }
-
-        return avg_ratios, win_rates
+        return avg_ratios, {}
 
 
 def _select_base_model(meta_model, data) -> object:
@@ -439,22 +408,6 @@ def _compute_avg_predictions(
         choices.append(model_choices)
 
     return choices
-
-
-def _execute_greedy(
-    parallel_state: ParallelExecutionState,
-    model_assignment: _Array,
-    num_models: int
-) -> None:
-    for i, ex_state in enumerate(parallel_state.execution_states):
-        if model_assignment[i] == num_models - 1:
-            for real_state in ex_state.state_realizations:
-                real_state.matching, real_state.value = dp.greedy(
-                    A=ex_state.A,
-                    coin_flips=real_state.coin_flips,
-                    r=0
-                )
-
 
 
 def evaluate_model(

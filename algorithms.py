@@ -106,14 +106,20 @@ def stochastic_opt(
 
     return matching, value
 
+    
 def greedy(
     instance: _Instance,
+    coin_flips: _Array
+):
+    return threshold_greedy(instance, coin_flips, 0)
+
+def threshold_greedy(
+    instance: _Instance,
     coin_flips: _Array,
-    **kwargs
+    threshold: float
 ):
     A, _, noisy_A, _ = instance
     m, n = A.shape
-    r = kwargs.get('r', 0)
 
     offline_nodes = frozenset(np.arange(n))
     matching = []
@@ -124,7 +130,7 @@ def greedy(
     for t in range(m):
         if coin_flips[t]:
             choice = np.argmax(noisy_A[t, :])
-            if choice in offline_nodes and noisy_A[t, choice] > r:
+            if choice in offline_nodes and noisy_A[t, choice] > threshold:
                 matching.append((t, choice))
                 offline_nodes = diff(offline_nodes, choice)
                 value += A[t, choice]

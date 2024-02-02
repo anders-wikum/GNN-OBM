@@ -90,6 +90,21 @@ class pygCrossEntropyLoss(nn.Module):
         )
     
 
+class metaCrossEntropyLoss(nn.Module):
+
+    def __init__(self):
+        super(metaCrossEntropyLoss, self).__init__()
+
+    def forward(self, pred, batch):
+        C = pred.size(dim=1)
+        # return F.mse_loss(pred.flatten(), batch.hint)
+        #print(torch.argmax(batch.hint.view(-1, C), dim=1), pred)
+        return F.cross_entropy(
+            pred,
+            batch.hint.view(-1, C)
+        )
+    
+
 class torchCrossEntropyLoss(nn.Module):
 
     def __init__(self):
@@ -139,7 +154,7 @@ def _get_loss(args):
         if args.processor == 'NN':
             return torchCrossEntropyLoss()
         else:
-            return pygCrossEntropyLoss()
+            return metaCrossEntropyLoss()
     else:
         raise NotImplemented
 
@@ -149,7 +164,7 @@ def _get_acc(args):
     elif args.head == 'classification':
         return _classification_accuracy
     else:
-        raise NotImplemented
+        return lambda x, y: 0
     
 
 def _get_model(args: dict):

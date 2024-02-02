@@ -92,6 +92,8 @@ def _sample_geom_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
     if not weighted:
         return(dist > 0).astype(float)
     
+    dist[dist > 0] = dist[dist > 0] - np.min(dist[dist>0])
+    dist /= np.max(dist)
     return dist
 
 
@@ -108,7 +110,6 @@ def _sample_gmission_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
         edge_df.worker_type.isin(worker_subset) &
         edge_df.task_type.isin(task_subset)
     ]
-
     A = np.array(
         subgraph_edges.pivot(
             index="task_type", columns="worker_type", values="weight")
@@ -323,7 +324,7 @@ def sample_instances(
     args,
     **kwargs
 ) -> Tuple[List[_Instance], _Array]:
-    noise_std = kwargs.get('noise', 0)
+    noise_std = args.get('noise', 0)
     As = _sample_bipartite_graphs(m, n, num, rng, **kwargs)
     noisy_As = [_add_noise_to_vector(A, rng, noise_std) for A in As]
     ps = _sample_probs(m, num, rng)
