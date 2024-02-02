@@ -1,5 +1,5 @@
-**/data/
-!/data/g_mission
+/data/*
+!/data/g_mission/
 **/__pycache__/*
 **/cache/
 **/gnn_library/__pycache__/
