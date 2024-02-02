@@ -3,7 +3,8 @@ from .OBM_deeperGCN import DeeperGCN
 
 NETWORKS = {
     'GENConv': OBM_GENConv,
-    'DeeperGCN': DeeperGCN
+    'DeeperGCN': DeeperGCN,
+    'TEST2': DeeperGCN
 }
 
 MODEL_SAVE_FOLDER = './trained_models/'

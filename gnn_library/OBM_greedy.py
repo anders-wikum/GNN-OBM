@@ -60,7 +60,7 @@ class OBM_Greedy(torch.nn.Module):
         choices = []
         for batch in batches:
             batch.to('cpu')
-            choices.append(_greedy_choices(batch))
+            choices.append(_greedy_choices(batch, self.t))
         return torch.cat(choices)
 
     
