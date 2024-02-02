@@ -228,9 +228,7 @@ def _sample_probs(
     rng: Generator
 ) -> _Array:
     
-    # p = rng.uniform(0.5, 1, m)
-    # return np.vstack([p for _ in range(num)]).T
-    return rng.uniform(0, 1, (m, num))
+    return rng.uniform(0.5, 1, (m, num))
 
 def _add_noise_to_vector(array, rng, noise_std, clip = True):
     # Adds random gaussian noise with std noise_std. If clamp is True

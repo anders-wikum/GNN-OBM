@@ -310,7 +310,6 @@ def _instance_to_sample_path(
         sample_data = pyg_graph
     else:
         sample_data = SAMPLE_INIT_FUNCS[meta_net_type](instance, rng)
-        #base_models = []
 
     sample_path = []
     offline_nodes = frozenset(np.arange(n))
