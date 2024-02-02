@@ -9,6 +9,13 @@ import torch
 import math
 import matplotlib.pyplot as plt
 import scipy.stats as st 
+import pickle
+
+from matplotlib.ticker import MultipleLocator, AutoMinorLocator, FuncFormatter
+import matplotlib
+matplotlib.rcParams['mathtext.fontset'] = 'stix'
+matplotlib.rcParams['font.family'] = 'STIXGeneral'
+plt.rcParams['text.usetex'] = False
 
 
 class Dataset(InMemoryDataset):
@@ -114,9 +121,13 @@ def _symmetrize(adj):
 def _neighbors(A: _Array, S: set, t: int) -> _Array:
     return [u for u in S if A[t, u] > 0]
 
+def _load_osmnx(location: str):
+    with open(f"data/OSMNX_{location}_travel_times.pickle", "rb") as handle:
+        location_info = pickle.load(handle)
+    return location_info
 
 def _load_gmission():
-    edge_df = pd.read_csv('./data/edges.txt', header=None)
+    edge_df = pd.read_csv('./data/g_mission/edges.txt', header=None)
     edge_df[['worker_type', 'task_type']
             ] = edge_df[0].str.split(';', expand=True)
     edge_df = edge_df \
@@ -151,9 +162,114 @@ def _extract_batch(batch):
 def _flip_coins(p: _Array, rng: Generator) -> _Array:
     return np.vectorize(lambda x: rng.binomial(1, x))(p)
 
+label_map = {
+    'learned': 'MAGNOLIA',
+    'greedy': 'greedy',
+    'threshold_greedy': 'greedy-t',
+    'lp_rounding': 'LP-rounding',
+    # 'GNN1': 'GNN1',
+    # 'GNN2': 'GNN2',
+}
 
-def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph_type, x_axis_name = "# online / # offline", confidence = 0.99):
+color_map = {
+    'learned': '#ff1f5b',
+    'greedy': '#009ade',
+    'threshold_greedy': '#af58ba',
+    'lp_rounding': '#00cd6c',
+    # 'GNN1': '#009ade',
+    # 'GNN2': '#af58ba',
+}
 
+def title_of_graph_type(graph_type):
+    graph = dict(graph_type)
+    if graph['graph_type'] == 'ER':
+        return f"ER, p={graph['p']}"
+    if graph['graph_type'] == 'GM':
+        return "gMission"
+    if graph['graph_type'] == 'OSMNX':
+        return f"Rideshare, {graph['location'].split(',',1)[0]}"
+    if graph['graph_type'] == 'BA':
+        return f"BA, b={graph['ba_param']}"
+    else:
+        return f"b-RGG, q={graph['q']}"
+
+model_order = label_map.keys()
+
+def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph_type, x_axis_name = "# online / # offline", confidence = 0.95):
+    fontsize = 17
+    fontsize2 = 20
+
+    num_subplots = len(data.keys())
+    fig, ax = plt.subplots(1, num_subplots, sharex=True, sharey=True, figsize=(12,3))
+    fig.add_subplot(111, frameon=False)
+
+    i = 0
+    for graph_type, comp_ratios in data.items():
+        aggregated_ratios = {}
+        for trial_ratios in comp_ratios:
+            for model, ratio_values in trial_ratios.items():
+                current_ratios = aggregated_ratios.get(model, [])
+                
+                # Compute the confidence interval for the competitive ratios
+                ci_lowerbound, ci_upperbound = st.norm.interval(alpha=confidence, 
+                                loc=np.mean(ratio_values), 
+                                scale=st.sem(ratio_values)) 
+                current_ratios.append((np.array(ratio_values).mean(), ci_lowerbound, ci_upperbound))
+                aggregated_ratios[model] = current_ratios
+
+        for model, model_ratios in aggregated_ratios.items():
+            if model in ['learned', 'greedy', 'threshold_greedy', 'lp_rounding']:
+                competitive_ratios = [val[0] for val in model_ratios]
+                ci_lbs = [val[1] for val in model_ratios]
+                ci_ubs = [val[2] for val in model_ratios]
+                ax[i].plot(ratios, competitive_ratios, label=label_map[model], color=color_map[model])
+                ax[i].fill_between(ratios, ci_lbs, ci_ubs, alpha = 0.2, color=color_map[model])
+
+                ax[i].xaxis.set_major_locator(MultipleLocator(20))
+                ax[i].yaxis.set_major_locator(MultipleLocator(0.05))
+
+                ax[i].tick_params(axis='both', which='major', labelsize=13)
+                ax[i].tick_params(axis='both', which='minor', labelsize=13)
+
+                ax[i].grid(visible=True, which='both', axis='both')
+                ax[i].set_title(title_of_graph_type(graph_type), fontsize=fontsize)
+                #ax[i].set_ylim([0.76, 1.01])
+                handles, labels = ax[i].get_legend_handles_labels()
+        i += 1
+
+    order = [0, 1, 3, 2]
+    fig.legend(
+        [handles[idx] for idx in order],
+        [labels[idx] for idx in order],
+        bbox_to_anchor=(1.08, 0.25),
+        loc='lower right',
+        fontsize=15
+    )
+    plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
+    plt.xlabel(x_axis_name, fontsize = fontsize2 - 2, labelpad=15)
+    plt.ylabel('Average competitive ratio', fontsize = fontsize2 - 2, labelpad=15)
+    plt.savefig(f"data/generalization_main.pdf", dpi=300, bbox_inches = "tight")
+    plt.show()
+        # title = f"{naming_function(graph_type)}"
+        # plt.title(title, fontsize = 18)
+        # plt.xlabel(x_axis_name, fontsize = 15)
+        # plt.ylabel('Average Competitive Ratio', fontsize = 15)
+        # plt.ylim((0.7,1.0))
+        # plt.legend()
+        # plt.show()
+def _plot_approx_ratios_all(ratios, data, naming_function = lambda graph_type: graph_type, x_axis_name = "# online / # offline", confidence = 0.95):
+    k = 4
+    fontsize = 20
+    fontsize2 = 20
+    # fontsize = 15
+    # fontsize2 = 20
+    num_subplots = len(data.keys())
+    # fig, ax = plt.subplots(k, num_subplots//k, sharex=True, sharey=True, figsize=(24,32))
+    fig, ax = plt.subplots(k, num_subplots//k, sharex=True, sharey=True, figsize=(12,16))
+    fig.add_subplot(111, frameon=False)
+
+    i = 0
+    j = 0
     for graph_type, comp_ratios in data.items():
         aggregated_ratios = {}
 
@@ -168,34 +284,120 @@ def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph
                 current_ratios.append((np.array(ratio_values).mean(), ci_lowerbound, ci_upperbound))
                 aggregated_ratios[model] = current_ratios
 
-        fig = plt.figure(figsize=(8,6))
+
         for model, model_ratios in aggregated_ratios.items():
-            competitive_ratios = [val[0] for val in model_ratios]
-            ci_lowerbounds = [val[1] for val in model_ratios]
-            ci_upperbounds = [val[2] for val in model_ratios]
-            plt.plot(ratios, competitive_ratios, label=model)
-            plt.fill_between(ratios, ci_lowerbounds, ci_upperbounds, alpha = 0.2)
+            if model in ['learned', 'greedy', 'threshold_greedy', 'lp_rounding']:
+                competitive_ratios = [val[0] for val in model_ratios]
+                ci_lbs = [val[1] for val in model_ratios]
+                ci_ubs = [val[2] for val in model_ratios]
+                ax[i, j].plot(ratios, competitive_ratios, label=label_map[model], color=color_map[model])
+                ax[i, j].tick_params(axis='both', which='major', labelsize=13)
+                ax[i, j].tick_params(axis='both', which='minor', labelsize=13)
 
-        title = f"{naming_function(graph_type)}"
-        plt.title(title, fontsize = 18)
-        plt.xlabel(x_axis_name, fontsize = 15)
-        plt.ylabel('Average Competitive Ratio', fontsize = 15)
-        plt.legend()
-        plt.savefig(f"data/{title.replace(' ', '_')}.png")
-        plt.show()
+                ax[i, j].xaxis.set_major_locator(MultipleLocator(0.2))
+                ax[i, j].yaxis.set_major_locator(MultipleLocator(0.1))
+                # ax[i, j].xaxis.set_minor_locator(AutoMinorLocator())  # Add minor ticks
 
-def _box_plots(data, naming_function = lambda graph_type: graph_type, colors = None):
+                ax[i, j].fill_between(ratios, ci_lbs, ci_ubs, alpha = 0.2, color=color_map[model])
+                ax[i, j].grid(visible=True, which='both', axis='both')
+                ax[i, j].set_title(title_of_graph_type(graph_type), fontsize=fontsize - 2)
+                #ax[i].set_ylim([0.76, 1.01])
 
+        # if (i == 1 and j == 0):
+        #     handles, labels = ax[i, j].get_legend_handles_labels()
+        #     order = [0, 1, 3, 2]
+        #     legend = ax[i,j].legend(
+        #         [handles[idx] for idx in order],
+        #         [labels[idx] for idx in order],
+        #         fontsize=fontsize-8, 
+        #         loc='lower left'
+        #     )
+        #     legend.get_frame().set_alpha(0.3)
+        handles, labels = ax[i, j].get_legend_handles_labels()
+
+        j += 1
+        j %= num_subplots // k
+        if j == 0:
+            i += 1
+
+    order = [0, 1, 3, 2]
+    fig.legend(
+        [handles[idx] for idx in order],
+        [labels[idx] for idx in order],
+        bbox_to_anchor=(1.15, 0.440),
+        # bbox_to_anchor=(1.08, 0.24),
+        # bbox_to_anchor=(1.24, 0.37),
+        loc='lower right',
+        fontsize=fontsize
+    )
+    plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False, labelsize=fontsize)
+    plt.xlabel(x_axis_name, fontsize = fontsize2, labelpad=15)
+    plt.ylabel('Average competitive ratio', fontsize = fontsize2, labelpad=15)
+    space = 0.15
+    plt.subplots_adjust(wspace=space, hspace=space)
+    plt.savefig(f"data/noise_robustness_all.pdf", dpi=300, bbox_inches = "tight")
+    plt.show()
+
+def _plot_approx_ratios_single(ratios, data, naming_function = lambda graph_type: graph_type, x_axis_name = "# online / # offline", confidence = 0.95):
+    num_subplots = len(data.keys())
+    fig, ax = plt.subplots(1, num_subplots, sharex=True, sharey=True, figsize=(12,12))
+    fig.add_subplot(111, frameon=False)
+
+    i = 0
     for graph_type, comp_ratios in data.items():
         aggregated_ratios = {}
-        labels = comp_ratios.keys()
-        fig, ax = plt.subplots(figsize=(6, 6))
-        all_data = np.stack(comp_ratios.values()).T
-        print(all_data.shape)
+
+        for trial_ratios in comp_ratios:
+            for model, ratio_values in trial_ratios.items():
+                current_ratios = aggregated_ratios.get(model, [])
+                
+                # Compute the confidence interval for the competitive ratios
+                ci_lowerbound, ci_upperbound = st.norm.interval(alpha=confidence, 
+                                loc=np.mean(ratio_values), 
+                                scale=st.sem(ratio_values)) 
+                current_ratios.append((np.array(ratio_values).mean(), ci_lowerbound, ci_upperbound))
+                aggregated_ratios[model] = current_ratios
+
+
+        for model, model_ratios in aggregated_ratios.items():
+            competitive_ratios = [val[0] for val in model_ratios]
+            ci_lbs = [val[1] for val in model_ratios]
+            ci_ubs = [val[2] for val in model_ratios]
+            ax.plot(ratios, competitive_ratios, label=label_map[model], color=color_map[model])
+            ax.fill_between(ratios, ci_lbs, ci_ubs, alpha = 0.2, color=color_map[model])
+            ax.grid(visible=True, which='both', axis='both')
+            ax.set_title(title_of_graph_type(graph_type))
+            #ax[i].set_ylim([0.76, 1.01])
+            handles, labels = ax.get_legend_handles_labels()
+        i += 1
+
+    order = [0, 1]
+    print(labels)
+    # fig.legend(
+    #     [handles[idx] for idx in order],
+    #     [labels[idx] for idx in order],
+    #     bbox_to_anchor=(1.08, 0.25),
+    #     loc='lower right',
+    #     fontsize=15
+    # )
+    plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
+    plt.xlabel(x_axis_name, fontsize = 15, labelpad=15)
+    plt.ylabel('Average competitive ratio', fontsize = 15, labelpad=15)
+    plt.savefig(f"data/noise_robustness_all.pdf", dpi=300, bbox_inches = "tight")
+    plt.show()
+
+def _box_plots(data, naming_function = lambda graph_type: graph_type):
+    num_subplots = len(data.keys())
+    fig, ax = plt.subplots(1, num_subplots, sharex=True, sharey=True, figsize=(12,3))
+    fig.add_subplot(111, frameon=False)
+
+    i = 0
+    for graph_type, comp_ratios in data.items():
+        all_data = np.stack([comp_ratios[model] for model in model_order]).T
 
         # source: https://matplotlib.org/stable/gallery/statistics/boxplot_color.html#sphx-glr-gallery-statistics-boxplot-color-py
         # rectangular box plot
-        bplot = ax.boxplot(all_data,
+        bplot = ax[i].boxplot(all_data,
                             vert=True,  # vertical box alignment
                             patch_artist=True,  # fill with color
                             showfliers=False,  # fill with color
@@ -204,16 +406,36 @@ def _box_plots(data, naming_function = lambda graph_type: graph_type, colors = N
             median.set_color('black')
 
         # fill with colors
-        for patch, color in zip(bplot['boxes'], colors):
+        for patch, color in zip(bplot['boxes'], color_map.values()):
             patch.set_facecolor(color)
 
         # adding horizontal grid lines
-        ax.yaxis.grid(True)
+        ax[i].grid(visible=True, which='both', axis='both')
 
-        title = f"{naming_function(graph_type)}"
-        ax.set_title(title, fontsize = 18)
-        ax.set_ylabel('Competitive Ratio', fontsize = 15)
-        ax.set_xticklabels(labels=labels, fontsize=15)
-        plt.legend()
-        plt.savefig(f"data/{title.replace(' ', '_')}.png")
-        plt.show()
+        # title = f"{naming_function(graph_type)}"
+        # ax[i].set_ylabel('Competitive Ratio', fontsize = 15)
+        # ax[i].set_xticklabels(lkabels=labels, fontsize=15)
+
+        ax[i].set_title(title_of_graph_type(graph_type), fontsize=17)
+        # ax[i].legend(model_order)
+        # ax[i].legend([bplot["boxes"][j] for j in range(len(bplot["boxes"]))], model_order, loc='upper right')
+        #ax[i].set_ylim([0.76, 1.01])
+        ax[i].set_xticklabels([])
+        ax[i].tick_params(labelcolor='none', axis = 'x', which='both', top=False, bottom=False, left=False, right=False, labelsize=13)
+        ax[i].tick_params(axis='both', which='major', labelsize=13)
+        ax[i].tick_params(axis='both', which='minor', labelsize=13)
+        if i != 0:
+            ax[i].tick_params(labelcolor='none', axis = 'y', which='both', top=False, bottom=False, left=False, right=False, labelsize=13)
+        i += 1
+    fig.legend(
+        [bplot["boxes"][j] for j in range(len(bplot["boxes"]))], 
+        label_map.values(),
+        bbox_to_anchor=(1.10, 0.25),
+        loc='lower right',
+        fontsize=15
+    )
+    plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
+    # plt.xlabel(x_axis_name, fontsize = 15, labelpad=15)
+    plt.ylabel('Competitive Ratio', fontsize = 20, labelpad=15)
+    plt.savefig(f"data/base_plots.pdf", dpi=300, bbox_inches = "tight")
+    plt.show()

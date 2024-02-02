@@ -231,17 +231,16 @@ def _validate_feasibility(x: _Array, p: _Array) -> _Array:
 
     return x
 
-def lp_match(A: _Array, p: _Array, verbose: Optional[bool] = False) -> _Array:
-
-    m, n = A.shape
+def lp_match(noisy_A, noisy_p, verbose: Optional[bool] = False) -> _Array:
+    m, n = noisy_A.shape
     online_nodes = range(m)
     offline_nodes = range(n)
     indices = list(it.product(offline_nodes, online_nodes))
 
     model = gp.Model('LP-MATCH')
     x = _build_variables(model, indices)
-    _build_constraints(model, x, p, online_nodes, offline_nodes, indices)
-    _build_objective(model, x, A, indices)
+    _build_constraints(model, x, noisy_p, online_nodes, offline_nodes, indices)
+    _build_objective(model, x, noisy_A, indices)
    
     if not verbose:
         model.Params.LogToConsole = 0
@@ -285,6 +284,7 @@ def _online_lp_rounding(x, A, p, noisy_A, noisy_p, coin_flips):
             valid_proposals = np.bitwise_and(offline_mask, proposals)
 
             if not np.all(valid_proposals == 0):
+                matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
                 matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
                 matching.append((t, matched_node))
                 val += A[t, matched_node]
