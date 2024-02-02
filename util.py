@@ -144,6 +144,7 @@ def _extract_batch(batch):
 def _flip_coins(p: _Array, rng: Generator) -> _Array:
     return np.vectorize(lambda x: rng.binomial(1, x))(p)
 
+
 def graph_config_to_string(config):
     graph_type = config['graph_type']
     if graph_type == 'ER':
@@ -158,22 +159,39 @@ def graph_config_to_string(config):
         return f"OSMNX_{config['location']}"
 
 label_map = {
+    'meta_gnn': 'MAGNOLIA (meta)',
     'learned': 'MAGNOLIA',
     'greedy': 'greedy',
     'greedy_t': 'greedy-t',
     'lp_rounding': 'LP-rounding',
+    'meta_threshold': 'threshold (meta)'
     # 'GNN1': 'GNN1',
     # 'GNN2': 'GNN2',
 }
 
 color_map = {
+    'meta_gnn': '#ff1f5b',
     'learned': '#ff1f5b',
     'greedy': '#009ade',
     'greedy_t': '#af58ba',
     'lp_rounding': '#00cd6c',
+    'meta_threshold': '#F9812A'
     # 'GNN1': '#009ade',
     # 'GNN2': '#af58ba',
 }
+
+def title_of_graph_type2(graph_type):
+    if 'ER' in graph_type:
+        return f"ER, p={graph_type[3:]}"
+    if 'GM' in graph_type:
+        return "gMission"
+    if 'OSMNX' in graph_type:
+        return f"Rideshare, {graph_type[6:-17]}"
+    if 'BA' in graph_type:
+        return f"BA, b={graph_type[3:]}"
+    else:
+        return f"b-RGG, q={graph_type[5:]}"
+    
 
 def title_of_graph_type(graph_type):
     if type(graph_type) == str:
@@ -248,13 +266,7 @@ def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph
     plt.ylabel('Average competitive ratio', fontsize = fontsize2 - 2, labelpad=15)
     plt.savefig(f"data/generalization_main.pdf", dpi=300, bbox_inches = "tight")
     plt.show()
-        # title = f"{naming_function(graph_type)}"
-        # plt.title(title, fontsize = 18)
-        # plt.xlabel(x_axis_name, fontsize = 15)
-        # plt.ylabel('Average Competitive Ratio', fontsize = 15)
-        # plt.ylim((0.7,1.0))
-        # plt.legend()
-        # plt.show()
+ 
 def _plot_approx_ratios_all(ratios, data, naming_function = lambda graph_type: graph_type, x_axis_name = "# online / # offline", confidence = 0.95):
     k = 4
     fontsize = 20
@@ -294,23 +306,12 @@ def _plot_approx_ratios_all(ratios, data, naming_function = lambda graph_type: g
 
                 ax[i, j].xaxis.set_major_locator(MultipleLocator(0.2))
                 ax[i, j].yaxis.set_major_locator(MultipleLocator(0.1))
-                # ax[i, j].xaxis.set_minor_locator(AutoMinorLocator())  # Add minor ticks
 
                 ax[i, j].fill_between(ratios, ci_lbs, ci_ubs, alpha = 0.2, color=color_map[model])
                 ax[i, j].grid(visible=True, which='both', axis='both')
                 ax[i, j].set_title(title_of_graph_type(graph_type), fontsize=fontsize - 2)
-                #ax[i].set_ylim([0.76, 1.01])
+   
 
-        # if (i == 1 and j == 0):
-        #     handles, labels = ax[i, j].get_legend_handles_labels()
-        #     order = [0, 1, 3, 2]
-        #     legend = ax[i,j].legend(
-        #         [handles[idx] for idx in order],
-        #         [labels[idx] for idx in order],
-        #         fontsize=fontsize-8, 
-        #         loc='lower left'
-        #     )
-        #     legend.get_frame().set_alpha(0.3)
         handles, labels = ax[i, j].get_legend_handles_labels()
 
         j += 1
@@ -323,8 +324,6 @@ def _plot_approx_ratios_all(ratios, data, naming_function = lambda graph_type: g
         [handles[idx] for idx in order],
         [labels[idx] for idx in order],
         bbox_to_anchor=(1.15, 0.440),
-        # bbox_to_anchor=(1.08, 0.24),
-        # bbox_to_anchor=(1.24, 0.37),
         loc='lower right',
         fontsize=fontsize
     )
@@ -349,7 +348,6 @@ def _plot_approx_ratios_single(ratios, data, naming_function = lambda graph_type
             for model, ratio_values in trial_ratios.items():
                 current_ratios = aggregated_ratios.get(model, [])
                 
-                # Compute the confidence interval for the competitive ratios
                 ci_lowerbound, ci_upperbound = st.norm.interval(alpha=confidence, 
                                 loc=np.mean(ratio_values), 
                                 scale=st.sem(ratio_values)) 
@@ -371,13 +369,7 @@ def _plot_approx_ratios_single(ratios, data, naming_function = lambda graph_type
 
     order = [0, 1]
     print(labels)
-    # fig.legend(
-    #     [handles[idx] for idx in order],
-    #     [labels[idx] for idx in order],
-    #     bbox_to_anchor=(1.08, 0.25),
-    #     loc='lower right',
-    #     fontsize=15
-    # )
+
     plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
     plt.xlabel(x_axis_name, fontsize = 15, labelpad=15)
     plt.ylabel('Average competitive ratio', fontsize = 15, labelpad=15)
@@ -409,15 +401,7 @@ def _box_plots(data, naming_function = lambda graph_type: graph_type):
 
         # adding horizontal grid lines
         ax[i].grid(visible=True, which='both', axis='both')
-
-        # title = f"{naming_function(graph_type)}"
-        # ax[i].set_ylabel('Competitive Ratio', fontsize = 15)
-        # ax[i].set_xticklabels(lkabels=labels, fontsize=15)
-
         ax[i].set_title(title_of_graph_type(graph_type), fontsize=17)
-        # ax[i].legend(model_order)
-        # ax[i].legend([bplot["boxes"][j] for j in range(len(bplot["boxes"]))], model_order, loc='upper right')
-        #ax[i].set_ylim([0.76, 1.01])
         ax[i].set_xticklabels([])
         ax[i].tick_params(labelcolor='none', axis = 'x', which='both', top=False, bottom=False, left=False, right=False, labelsize=13)
         ax[i].tick_params(axis='both', which='major', labelsize=13)
@@ -437,5 +421,114 @@ def _box_plots(data, naming_function = lambda graph_type: graph_type):
     plt.ylabel('Competitive Ratio', fontsize = 20, labelpad=15)
     plt.savefig(f"data/base_plots.pdf", dpi=300, bbox_inches = "tight")
     plt.show()
+
+
+def graph_config_to_string(config):
+    graph_type = config['graph_type']
+    if graph_type == 'ER':
+        return f"ER_{config['p']}"
+    if graph_type == 'BA':
+        return f"BA_{config['ba_param']}"
+    if graph_type == 'GEOM':
+        return f"GEOM_{config['q']}"
+    if graph_type == 'GM':
+        return "GM"
+    if graph_type == 'OSMNX':
+        return f"OSMNX_{config['location']}"
+
+def save_meta_experiment(graph_str, data):
+    with open(f"experiments/meta_{graph_str}.pickle", 'wb') as handle:
+            pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+def upload_meta_experiment(graph_str, data):
+    filepath = f"experiments/meta_{graph_str}.pickle"
+    try:
+        with open(filepath, 'rb') as handle:
+            current_data = pickle.load(handle)
+        
+        for model in current_data.keys():
+            if model == 'num_trials':
+                current_data[model] += data[model]
+            else:
+                for i in range(len(current_data[model])):
+                    current_data[model][i].extend(data[model][i])
+
+        with open(filepath, 'wb') as handle:
+            pickle.dump(current_data, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    except:
+        with open(filepath, 'wb') as handle:
+            pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def load_meta_experiments(configs):
+    data = {}
+    for config in configs:
+        config_str = graph_config_to_string(config)
+        with open(f"experiments/1meta_{config_str}.pickle", 'rb') as handle:
+            data[config_str] = pickle.load(handle)
+    return data
+
+
+def _plot_meta_ratios(
+        ratios,
+        data,
+        models,
+        naming_function = lambda graph_type: graph_type,
+        x_axis_name = "$\\vert R \\vert \; / \; \\vert L \\vert$ regime",
+        confidence = 0.95,
+        
+    ):
+    fig, ax = plt.subplots(4, 3, sharex=True, sharey=True, figsize=(12,16))
+    fig.add_subplot(111, frameon=False)
+    i = 0
+    j = 0
+    for graph_type, graph_data in data.items():
+        avg_ratios = {}
+
+        for model, cr_by_ratio in graph_data.items():
+            if model != 'num_trials':
+                avg_ratios[model] = []
+                for raw_crs in cr_by_ratio:
+                    mean = np.mean(raw_crs)
+                    ci_lb, ci_ub = st.norm.interval(
+                        alpha=0.95, 
+                        loc=mean, 
+                        scale=st.sem(raw_crs)
+                    )
+                    avg_ratios[model].append((mean, ci_lb, ci_ub))
+
+        for model, model_ratios in avg_ratios.items():
+            if model in models:
+                competitive_ratios = [val[0] for val in model_ratios]
+                ci_lbs = [val[1] for val in model_ratios]
+                ci_ubs = [val[2] for val in model_ratios]
+                ax[i, j].plot(ratios, competitive_ratios, label=label_map[model], color=color_map[model])
+                ax[i, j].fill_between(ratios, ci_lbs, ci_ubs, alpha = 0.2, color=color_map[model])
+                ax[i, j].grid(visible=True, which='both', axis='both')
+                ax[i, j].set_title(title_of_graph_type2(graph_type), fontsize=17)
+                ax[i, j].tick_params(axis='both', which='major', labelsize=13)
+                ax[i, j].tick_params(axis='both', which='minor', labelsize=13)
+                handles, labels = ax[i, j].get_legend_handles_labels()
+
+        j += 1
+        if j == 3:
+            i += 1
+            j = 0
+
+    fig.legend(
+        handles,
+        labels,
+        bbox_to_anchor=(1.22, 0.5),
+        loc='right',
+        fontsize=20
+    )
+    plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
+    plt.xlabel(x_axis_name, fontsize = 20, labelpad=15)
+    plt.ylabel('Average competitive ratio', fontsize = 20, labelpad=15)
+    plt.savefig(f"data/meta_complete_plots.pdf", dpi=300, bbox_inches = "tight")
+    plt.show()
+
+
 
 

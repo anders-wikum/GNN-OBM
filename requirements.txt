@@ -5,6 +5,6 @@ pandas
 pytest
 scipy
 torch==2.0.0
+optuna
 osmnx
-
-
+tqdm

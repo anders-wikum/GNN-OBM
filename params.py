@@ -31,30 +31,6 @@ import numpy as np
 
 ######## Training ########
 
-META_TRAIN_CONFIG = {
-    'train_num': 150,
-    'val_num': 50,
-    'configs': [
-        {
-            'graph_type': 'ER',
-            'p': 1,
-            'weighted': True
-        },
-        {
-            'graph_type': 'BA',
-            'ba_param': 4,
-            'weighted': False
-        },
-        {
-            'graph_type': 'GEOM',
-            'q': 0.25,
-            'd': 2,
-            'weighted': True
-        }
-    ],
-    'regimes': [(6, 10), (8, 8), (10, 6)]
-}
-
 BASE_MODEL_TRAIN_CONFIG = {
 	'train_num': 200,
 	'val_num': 100,
@@ -77,6 +53,30 @@ BASE_MODEL_TRAIN_CONFIG = {
 		}
 	],
 	'regimes': [(30,10)]
+}
+
+META_TRAIN_CONFIG = {
+    'train_num': 150,
+    'val_num': 50,
+    'configs': [
+        {
+            'graph_type': 'ER',
+            'p': 1,
+            'weighted': True
+        },
+        {
+            'graph_type': 'BA',
+            'ba_param': 4,
+            'weighted': False
+        },
+        {
+            'graph_type': 'GEOM',
+            'q': 0.25,
+            'd': 2,
+            'weighted': True
+        }
+    ],
+    'regimes': [(6, 10), (8, 8), (10, 6)]
 }
 
 NOISE_ROBUST_MODEL_TRAIN_CONFIG = {
@@ -192,7 +192,7 @@ MAIN_TESTING_GRAPH_CONFIGS = [
     }
 ]
 
-
+EXPERIMENT_META_REGIMES = [(x, 16) for x in np.arange(8, 65, 4)]
 EXPERIMENT_BASE_TESTING_REGIMES = [(30,10)]
 EXPERIMENT_NOISE_ROBUSTNESS_REGIMES = [(30,10)]
 EXPERIMENT_SIZE_GENERALIZATION_REGIMES = [(2*x, x) for x in np.arange(10, 40, 2)]
