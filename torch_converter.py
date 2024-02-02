@@ -210,114 +210,6 @@ def label_pyg(data: Data, y: _Array) -> Data:
     return deepcopy(data)
 
 
-def _density(instance: _Instance) -> float:
-   A, _, _, _ = instance
-   return (A > 0).sum() / (A >= 0).sum()
-
-
-def _online_ratio(instance: _Instance) -> float:
-    A, _, _, _ = instance
-    m, n = A.shape
-    return m / n
-
-
-def _exp_clustering_coef_quantiles(
-    instance: _Instance,
-    threshold: float
-) -> List[float]:
-    A, p, _, _ = instance
-    if np.all(A == 0):
-        return np.array([0] * 2)
-    
-    return np.quantile(
-        ((A > threshold).T @ p) / p.sum(),
-        [0, 1]
-    )
-
-
-def _exp_graph_clustering_coef(
-    instance: _Instance,
-    threshold: float
-) -> List[float]:
-    A, p, _, _ = instance
-    if np.all(A == 0):
-        return 0
-
-    return np.mean((A >= threshold).T @ p / p.sum())
-
-
-def _edge_quantiles(instance: _Instance) -> List[float]:
-    A, _, _, _ = instance
-    if np.all(A == 0):
-        return np.array([0] * 5)
-    
-    return np.quantile(
-        A[A > 0].flatten(),
-        [0, 0.25, 0.5, 0.75, 1]
-    )
-
-
-def _expected_online_ratio(instance: _Instance) -> float:
-    A, p, _, _ = instance
-    n = A.shape[1]
-    return p.sum() / n
-
-
-def _featurize(instance: _Instance) -> _Array:
-    SCAL_FEAT_FNS = [
-        (_online_ratio, [[]]),
-        (_expected_online_ratio, [[]]),
-        (_exp_graph_clustering_coef, [[0], [0.2], [0.4], [0.6], [0.8]]),
-        (_density, [[]])
-    ]
-    VEC_FEAT_FNS = [
-        (_edge_quantiles, [[]]),
-        (_exp_clustering_coef_quantiles, [[0], [0.2], [0.4], [0.6], [0.8]])
-    ]
-
-    embedding = [
-        *[
-            func(instance, *kwargs)
-            for (func, kwarg_list) in SCAL_FEAT_FNS
-            for kwargs in kwarg_list
-        ],
-        *[
-            el
-            for (func, kwarg_list) in VEC_FEAT_FNS
-            for kwargs in kwarg_list
-            for el in func(instance, *kwargs)
-        ]
-    ]
-
-    return np.array(embedding)
-
-
-def init_features(instance: _Instance, rng: Generator) -> Data:
-    return Data(X=_featurize(instance))
-
-
-def update_features(
-    data: Data,
-    instance: _Instance,
-    choice: int,
-    t: int,
-    offline_nodes: frozenset
-) -> None:
-    
-    A, p, _, _ = instance
-    # Filter used offline nodes, online nodes that have arrived
-    p_new = p[t:]
-    A_new = A[t:, :]
-    mask = [i in offline_nodes for i in np.arange(A.shape[1])]
-    A_new = A_new[:, mask] 
-    data.X = _featurize((A_new, p_new))
-
-
-def label_features(data: Data, y: _Array) -> None:
-    data.y = y
-    return deepcopy(data)
-
-
 def _2d_normalize(arr: _Array):
     return (arr - arr.mean()) / arr.std()
 
@@ -391,18 +283,15 @@ LABEL_FUNCS = {
 }
 
 SAMPLE_INIT_FUNCS = {
-    'gnn': init_pyg,
-    'nn': init_features
+    'gnn': init_pyg
 }
 
 SAMPLE_UPDATE_FUNCS = {
-    'gnn': update_pyg,
-    'nn': update_features
+    'gnn': update_pyg
 }
 
 SAMPLE_LABEL_FUNCS = {
-    'gnn': label_pyg,
-    'nn': label_features
+    'gnn': label_pyg
 }
 
 def _instance_to_sample_path(
@@ -503,92 +392,3 @@ def _instances_to_train_samples(
             )
         )
     return samples
-
-def _encode_one_hot_max(array):
-    label = np.zeros(array.shape[0])
-    if np.sum(array == np.max(array)) > 1:
-        return label
-    
-    label[np.argmax(array)] = 1
-    return label
-
-# def _instances_to_gnn_samples(
-#     instances: List[_Instance],
-#     base_models: List[object],
-#     batch_size: int,
-#     head: str   
-# ):
-    
-#     from evaluate import evaluate_model
-#     rng = np.random.default_rng()
-#     data_list = []
-#     for instance in instances:
-#         data_list.append(SAMPLE_INIT_FUNCS['gnn'](instance, rng))
-    
-#     labels = []
-#     for model in base_models:
-#         model_ratio, _ = evaluate_model(
-#             meta_model=None,
-#             meta_model_type=None,
-#             base_models=[model],
-#             instances=instances,
-#             batch_size=batch_size,
-#             rng=rng,
-#             num_realizations=10
-#         )
-#         labels.append(model_ratio)
-#     labels = np.array(labels).T
-
-#     keep_indices = []
-#     for i, data in enumerate(data_list):
-#         instance_label = labels[i, :]
-#         if head == 'classification':
-#             instance_label = _encode_one_hot_max(instance_label)
-#             if not np.all(instance_label == 0):
-#                 keep_indices.append(i)
-#         data.hint = torch.tensor(instance_label, dtype=torch.float32)
-
-#     return [data_list[i] for i in keep_indices]
-    
-def _instances_to_nn_samples(
-        instances: List[_Instance],
-        base_models: List[object],
-        batch_size: int
-    ):
-
-    from evaluate import evaluate_model
-    rng = np.random.default_rng()
-    X = [_featurize(instance) for instance in instances]
-    labels = []
-    for model in base_models:
-        model_ratio, greedy_ratio = evaluate_model(
-            meta_model=None,
-            meta_model_type=None,
-            base_models=[model],
-            instances=instances,
-            batch_size=batch_size,
-            rng=rng,
-            num_realizations=25
-        )
-        labels.append(model_ratio)
-    #labels.append(greedy_ratio)
-    labels = np.array(labels).T
-
-    y = np.zeros(labels.shape)
-    y[np.arange(y.shape[0]), np.argmax(labels, axis=1)] = 1
-    y = [y[i, :] for i in range(y.shape[0])]
-
-    data_list = [Data(X=X[i], y=y[i]) for i in range(len(y))]
-    return data_list
-
-
-def _instances_to_nn_eval(instances: List[_Instance]):
-    return torch.FloatTensor(
-        np.vstack(
-            [
-                _featurize(instance)
-                for instance in instances
-            ]
-        )
-    )
-

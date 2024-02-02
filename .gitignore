@@ -3,4 +3,5 @@
 **/cache/
 **/gnn_library/__pycache__/
 **/*.pyc
+**/experiments/
 #**/trained_models/
