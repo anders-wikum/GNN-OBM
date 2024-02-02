@@ -1,8 +1,8 @@
 **/data/
+!/data/g_mission
 **/__pycache__/*
 **/cache/
 **/gnn_library/__pycache__/
 **/*.pyc
-**/experiments/
-!data/g_mission
+
 #**/trained_models/
