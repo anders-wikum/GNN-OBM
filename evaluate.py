@@ -15,6 +15,7 @@ from params import _Array, _Instance
 _ModelIndex = Tuple[int, int]
 BASELINES = {
     'greedy': dp.greedy,
+    'threshold_greedy': dp.greedy,
     'lp_rounding': dp.lp_approx
 }
 
@@ -332,17 +333,18 @@ class ParallelExecutionState:
             p = ex_state.p
             noisy_A = ex_state.noisy_A
             noisy_p = ex_state.noisy_p
+            
             for j, real_state in enumerate(ex_state.state_realizations):
                 coin_flips = real_state.coin_flips
                 OPT_matching, OPT = dp.offline_opt(A, coin_flips)
 
                 if OPT > 0:
                     ratios["learned"][i, j] = real_state.value / OPT
-                    self._compute_win_rates(
-                        OPT_matching,
-                        real_state.matching,
-                        win_rate_log["learned"]
-                    )
+                    # self._compute_win_rates(
+                    #     OPT_matching,
+                    #     real_state.matching,
+                    #     win_rate_log["learned"]
+                    # )
                     for baseline in baselines:
                         matching, value = BASELINES[baseline](
                             (A, p, noisy_A, noisy_p),

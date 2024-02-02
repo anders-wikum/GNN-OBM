@@ -10,21 +10,24 @@ _Instance = Tuple[_Array, _Array, _Array, _Array]
 
 GRAPH_TYPES = ['GEOM', 'ER', 'BA', 'COMP', 'GM', 'FEAT', 'PART', 'OSMNX']
 
+GROUP_SAMPLERS = ['GM', 'OSMNX']
+
 SAMPLER_SPECS = {
-    'GEOM': set(['threshold', 'scaling']),
+    'GEOM': set(['q', 'd']),
     'ER': set(['p', 'weighted']),
     'BA': set(['ba_param', 'weighted']),
     'COMP': set([]),
     'GM': set([]),
     'FEAT': set(['q']),
     'PART': set(['p', 'k', 'eps']),
-    'OSMNX': set(['location_info']),
+    'OSMNX': set(['location']),
 }
 
 
 # ============== END ====================================== #
 
 # ============== PyG converter params ===================== #
+NODE_FEATURE_DIM = 5
 
 
 # ============== END ====================================== #

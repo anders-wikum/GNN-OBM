@@ -326,11 +326,13 @@ def load(name: str, device: str) -> object:
 
 # GNN1 eval 
 node_configs_gnn1 = [(10,16), (10,20), (10,30), (10,60)]
-node_configs_gnn1 = [(16,10), (20,10), (30,10), (60,10)]
+node_configs_gnn2 = [(16,10), (20,10), (30,10), (60,10)]
+node_configs_gnn = [(30,10)]
+# node_configs_gnn = [(10,10), (20,20)]
 graph_configs_standard = [
     {
         'graph_type': 'ER',
-        'p': 0.75,
+        'p': 0.25,
         'weighted': True
     },
     {
@@ -340,7 +342,7 @@ graph_configs_standard = [
     },
     {
         'graph_type': 'ER',
-        'p': 0.9,
+        'p': 0.75,
         'weighted': True
     },
     {
@@ -359,25 +361,128 @@ graph_configs_standard = [
         'weighted': True
     },
     {
-        'graph_type': 'FEAT',
+        'graph_type': 'GEOM',
+        'q': 0.15,
+        'd': 2,
+        'weighted': True
+    },
+     {
+        'graph_type': 'GEOM',
+        'q': 0.25,
+        'd': 2,
+        'weighted': True
+    },
+    {
+        'graph_type': 'GEOM',
         'q': 0.5,
+        'd': 2,
         'weighted': True
     },
     {
-        'graph_type': 'FEAT',
-        'q': 0.75,
+        'graph_type': 'OSMNX',
+        'location': 'Piedmont, California, USA'
+    },
+    {
+        'graph_type': 'OSMNX',
+        'location': 'Fremont, California, USA'
+    },
+    {
+        'graph_type': 'GM'
+    }
+
+]
+
+graph_configs_main = [
+    {
+        'graph_type': 'ER',
+        'p': 0.5,
         'weighted': True
     },
     {
-        'graph_type': 'FEAT',
-        'q': 0.85,
+        'graph_type': 'GEOM',
+        'q': 0.25,
+        'd': 2,
         'weighted': True
     },
     {
-        'graph_type': 'FEAT',
-        'q': 0.9,
+        'graph_type': 'OSMNX',
+        'location': 'Fremont, California, USA'
+    },
+    {
+        'graph_type': 'GM'
+    }
+]
+graph_config1 = [
+    {
+        'graph_type': 'ER',
+        'p': 0.25,
         'weighted': True
     },
+    {
+        'graph_type': 'ER',
+        'p': 0.5,
+        'weighted': True
+    },
+]
+graph_config2 = [
+    {
+        'graph_type': 'ER',
+        'p': 0.75,
+        'weighted': True
+    },
+    {
+        'graph_type': 'BA',
+        'ba_param': 4,
+        'weighted': True
+    },
+]
+graph_config3 = [
+    {
+        'graph_type': 'BA',
+        'ba_param': 6,
+        'weighted': True
+    },
+    {
+        'graph_type': 'BA',
+        'ba_param': 8,
+        'weighted': True
+    },
+]
+graph_config4 = [
+    {
+        'graph_type': 'GEOM',
+        'q': 0.15,
+        'd': 2,
+        'weighted': True
+    },
+     {
+        'graph_type': 'GEOM',
+        'q': 0.25,
+        'd': 2,
+        'weighted': True
+    },
+]
+
+graph_config5 = [
+    {
+        'graph_type': 'GEOM',
+        'q': 0.5,
+        'd': 2,
+        'weighted': True
+    },
+    {
+        'graph_type': 'OSMNX',
+        'location': 'Piedmont, California, USA'
+    },
+]
+graph_config6 = [
+    {
+        'graph_type': 'OSMNX',
+        'location': 'Fremont, California, USA'
+    },
+    {
+        'graph_type': 'GM'
+    }
 ]
 
 import osmnx as ox
@@ -388,7 +493,7 @@ def get_location_graph(city):
 	return {'location_graph': location_graph, 'city': city}
 
 piedmont = get_location_graph("Piedmont, California, USA")
-fremont = get_location_graph("Fremont, Switzerland")
+fremont = get_location_graph("Fremont, California, USA")
 # geneva = get_location_graph("Geneva, Switzerland")
 
 graph_configs_rideshare = [
