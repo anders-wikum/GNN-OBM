@@ -10,6 +10,7 @@ import math
 import matplotlib.pyplot as plt
 import scipy.stats as st 
 import pickle
+import ast
 
 from matplotlib.ticker import MultipleLocator, AutoMinorLocator, FuncFormatter
 import matplotlib
@@ -143,10 +144,23 @@ def _extract_batch(batch):
 def _flip_coins(p: _Array, rng: Generator) -> _Array:
     return np.vectorize(lambda x: rng.binomial(1, x))(p)
 
+def graph_config_to_string(config):
+    graph_type = config['graph_type']
+    if graph_type == 'ER':
+        return f"ER_{config['p']}"
+    if graph_type == 'BA':
+        return f"BA_{config['ba_param']}"
+    if graph_type == 'GEOM':
+        return f"GEOM_{config['q']}"
+    if graph_type == 'GM':
+        return "GM"
+    if graph_type == 'OSMNX':
+        return f"OSMNX_{config['location']}"
+
 label_map = {
     'learned': 'MAGNOLIA',
     'greedy': 'greedy',
-    'threshold_greedy': 'greedy-t',
+    'greedy_t': 'greedy-t',
     'lp_rounding': 'LP-rounding',
     # 'GNN1': 'GNN1',
     # 'GNN2': 'GNN2',
@@ -155,14 +169,17 @@ label_map = {
 color_map = {
     'learned': '#ff1f5b',
     'greedy': '#009ade',
-    'threshold_greedy': '#af58ba',
+    'greedy_t': '#af58ba',
     'lp_rounding': '#00cd6c',
     # 'GNN1': '#009ade',
     # 'GNN2': '#af58ba',
 }
 
 def title_of_graph_type(graph_type):
-    graph = dict(graph_type)
+    if type(graph_type) == str:
+        graph = ast.literal_eval(graph_type)
+    else:
+        graph = dict(graph_type)
     if graph['graph_type'] == 'ER':
         return f"ER, p={graph['p']}"
     if graph['graph_type'] == 'GM':
@@ -199,7 +216,7 @@ def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph
                 aggregated_ratios[model] = current_ratios
 
         for model, model_ratios in aggregated_ratios.items():
-            if model in ['learned', 'greedy', 'threshold_greedy', 'lp_rounding']:
+            if model in ['learned', 'greedy', 'greedy_t', 'lp_rounding']:
                 competitive_ratios = [val[0] for val in model_ratios]
                 ci_lbs = [val[1] for val in model_ratios]
                 ci_ubs = [val[2] for val in model_ratios]
@@ -267,7 +284,7 @@ def _plot_approx_ratios_all(ratios, data, naming_function = lambda graph_type: g
 
 
         for model, model_ratios in aggregated_ratios.items():
-            if model in ['learned', 'greedy', 'threshold_greedy', 'lp_rounding']:
+            if model in ['learned', 'greedy', 'greedy_t', 'lp_rounding']:
                 competitive_ratios = [val[0] for val in model_ratios]
                 ci_lbs = [val[1] for val in model_ratios]
                 ci_ubs = [val[2] for val in model_ratios]

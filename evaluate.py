@@ -4,9 +4,6 @@ import algorithms as dp
 import numpy as np
 from torch_geometric.loader import DataLoader
 from util import Dataset, diff, fill_list, _flip_coins, _vtg_greedy_choices
-import torch.nn.functional as F
-from algorithms import cache_stochastic_opt
-
 from typing import Optional
 from numpy.random import Generator
 from typing import List, Tuple
@@ -134,70 +131,9 @@ class ParallelExecutionState:
             for execution_state in self.execution_states
             for realized_state in execution_state.state_realizations
         ])
-        return (online_offline_ratios > 1.5).astype(int)
-    
-
-    def _hybrid_model_assign(
-        self,
-        meta_model: object,
-        batch_size: int
-    ):
-        
-        assignment_len = self.num_instances * self.num_realizations
         if meta_model is None:
-            return np.zeros(assignment_len).astype(int)
-
-        device = next(meta_model.parameters()).device
-        data_list = [
-            realized_state.dataset
-            for execution_state in self.execution_states
-            for realized_state in execution_state.state_realizations
-        ]
-        gnn1_mask = [False] * assignment_len
-        gnn2_mask = [False] * assignment_len
-        meta_learner_mask = [False] * assignment_len
-
-        for i, data in enumerate(data_list):
-            online_offline_ratio = data.graph_features[1].item()
-
-            if online_offline_ratio >= 2.0:
-                gnn1_mask[i] = True
-            elif data.graph_features[1].item() < 0.75:
-                gnn2_mask[i] = True
-            else:
-                meta_learner_mask[i] = True
-
-        meta_learner_data_list = [
-            data_list[i] for i, boolean in enumerate(meta_learner_mask)
-            if boolean
-        ]
-  
-        assignment = np.zeros(assignment_len)
-        assignment[gnn1_mask] = 0
-        assignment[gnn2_mask] = 1
-        
-        if len(meta_learner_data_list) > 0:
-            data_loader = DataLoader(
-                Dataset(meta_learner_data_list),
-                batch_size=batch_size,
-                shuffle=False,
-                pin_memory=True
-            )
-
-            with torch.no_grad():
-                preds = []
-                for batch in data_loader:
-                    batch.to(device)
-                    pred = _select_base_model(meta_model, batch)
-                    preds.append(pred)
-                preds = torch.cat(preds) \
-                    .round() \
-                    .cpu() \
-                    .numpy()
-        
-            assignment[meta_learner_mask] = preds
-
-        return assignment.astype(int)
+            return np.zeros(online_offline_ratios.shape[0]).astype(int)
+        return (online_offline_ratios > 1.5).astype(int)
 
 
     def _gnn_model_assign(
@@ -233,30 +169,6 @@ class ParallelExecutionState:
             .cpu() \
             .numpy() \
             .astype(int)
-
-
-
-    def _nn_model_assign(
-        self,
-        meta_model: object
-    ):
-        
-        device = next(meta_model.parameters()).device
-        instances = [
-            (execution_state.A, execution_state.p)
-            for execution_state in self.execution_states
-        ]
-
-        if meta_model is None:
-            return np.zeros(len(instances)).astype(int)
-        
-        else:
-            X = pc._instances_to_nn_eval(instances).to(device)
-            with torch.no_grad():
-                return _select_base_model(meta_model, (X, None)) \
-                    .cpu() \
-                    .numpy() \
-                    .astype(int)
             
     def _model_assign(
         self,
@@ -266,10 +178,6 @@ class ParallelExecutionState:
     ):
         if meta_model_type == 'gnn':
             return self._gnn_model_assign(meta_model, batch_size)
-        elif meta_model_type == 'hybrid':
-            return self._hybrid_model_assign(meta_model, batch_size)
-        elif meta_model_type == 'nn':
-            return self._nn_model_assign(meta_model)
         else:
             return self._heuristic_model_assign(meta_model)
             
@@ -374,41 +282,6 @@ def _compute_base_model_predictions(
 
     return choices
 
-def _batch_select_test(batches):
-    choices = []
-    for batch in batches:
-        vtg_sum = batch.base_model_preds
-        vtg_sum = vtg_sum / torch.linalg.vector_norm(vtg_sum, dim=0, ord=1)
-        vtg_sum = vtg_sum.sum(dim=1)
-        vtg_sum = vtg_sum.to('cuda:2')
-        choices.append(_vtg_greedy_choices(vtg_sum, batch))
-    return torch.cat(choices)
-
-
-def _compute_avg_predictions(
-    base_models: List[torch.nn.Module],
-    arrival_indices,
-    parallel_state: ParallelExecutionState,
-    batch_size: int
-) -> List[torch.Tensor]:
-
-    choices = []
-    for j, _ in enumerate(base_models):
-        model_arrival_indices = arrival_indices[j]
-        
-        if len(model_arrival_indices) == 0:
-            model_choices = None
-        else:
-            model_batches = parallel_state.batch_data(
-                model_arrival_indices,
-                batch_size
-            )
-            model_choices = _batch_select_test(model_batches)
-
-        choices.append(model_choices)
-
-    return choices
-
 
 def evaluate_model(
     meta_model: object,
@@ -456,13 +329,6 @@ def evaluate_model(
             parallel_state,
             batch_size
         )
-
-        # choices = _compute_avg_predictions(
-        #     base_models,
-        #     arrival_indices,
-        #     parallel_state,
-        #     batch_size
-        # )
 
         parallel_state.update(t, choices, non_arrival_indices, arrival_indices)
 
