@@ -8,6 +8,7 @@ from typing import Optional
 from numpy.random import Generator
 from typing import List, Tuple
 from params import _Array, _Instance
+import time
 
 _ModelIndex = Tuple[int, int]
 BASELINES = {
@@ -79,6 +80,7 @@ class ParallelExecutionState:
         base_models: List[torch.nn.Module]
     ):
         self.num_instances = len(instances)
+        self.instances = instances
         self.num_realizations = num_realizations
         self.max_online_nodes = np.max([A.shape[0] for (A, _, _, _) in instances])
         self.execution_states = [
@@ -214,17 +216,26 @@ class ParallelExecutionState:
                 shape=(self.num_instances, self.num_realizations)
             )
         }
+        inputs = [
+            (instance[2], instance[3])
+            for instance in self.instances
+        ]
+        lp_outputs = dp.call_model(inputs)
+        times = {baseline: 0 for baseline in baselines}
+
 
         for baseline in baselines:
             ratios[baseline] = np.zeros(
                 shape=(self.num_instances, self.num_realizations)
             )
-
+        
         for i, ex_state in enumerate(self.execution_states):
             A = ex_state.A
             p = ex_state.p
             noisy_A = ex_state.noisy_A
             noisy_p = ex_state.noisy_p
+            kwargs["lp_rounding"]["x"] = lp_outputs[i]
+            kwargs["naor_lp_rounding"]["x"] = lp_outputs[i]
             
             for j, real_state in enumerate(ex_state.state_realizations):
                 coin_flips = real_state.coin_flips
@@ -233,24 +244,28 @@ class ParallelExecutionState:
                 if OPT > 0:
                     ratios["learned"][i, j] = real_state.value / OPT
                     for baseline in baselines:
+                        base_start = time.perf_counter()
                         _, value = BASELINES[baseline](
                             (A, p, noisy_A, noisy_p),
                             real_state.coin_flips,
                             **kwargs[baseline]
                         )
                         ratios[baseline][i, j] = value / OPT
+                        base_end = time.perf_counter()
+                        times[baseline] += base_end - base_start
+           
                         
                 else:
                     ratios["learned"][i, j] = np.nan
                     for baseline in baselines:
                         ratios[baseline][i, j] = np.nan
-
+                        
         avg_ratios = {
             name: list(np.nanmean(ratio_matrix, axis=1))
             for (name, ratio_matrix) in ratios.items()
         }
 
-        return avg_ratios, {}
+        return avg_ratios, times
 
 
 def _select_base_model(meta_model, data) -> object:
@@ -298,18 +313,21 @@ def evaluate_model(
     
     # ==================== State generation =============================== #
     
+    gen_start = time.perf_counter()
     parallel_state = ParallelExecutionState(
         instances,
         num_realizations,
         rng,
         base_models
     )
+    gen_end = time.perf_counter()
 
     # ===================================================================== #
 
     num_models = len(base_models)
     model_assignment = None
 
+    gnn_start = time.perf_counter()
     for t in range(parallel_state.max_online_nodes):
 
         model_assignment = parallel_state._model_assign(
@@ -333,12 +351,19 @@ def evaluate_model(
 
         parallel_state.update(t, choices, non_arrival_indices, arrival_indices)
 
-    ratio_dict = parallel_state.compute_competitive_ratios(
+    gnn_end = time.perf_counter()
+
+
+    ratio_dict, times = parallel_state.compute_competitive_ratios(
         baselines,
         **kwargs
     )
 
-    return ratio_dict
+    print(f"Generation time: {gen_end - gen_start}")
+    print(f"GNN time: {gnn_end - gnn_start}")
+    print(f"Baseline times: {times}")
+
+    return ratio_dict, {}
 
 
 def pp_output(ratios: dict) -> None:
