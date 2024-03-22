@@ -160,22 +160,24 @@ def graph_config_to_string(config):
 
 label_map = {
     'meta_gnn': 'MAGNOLIA (meta)',
-    'learned': 'MAGNOLIA',
+    #'learned': 'MAGNOLIA',
     'greedy': 'greedy',
     'greedy_t': 'greedy-t',
-    'lp_rounding': 'LP-rounding',
-    'meta_threshold': 'threshold (meta)'
+    'lp_rounding': 'LP-rounding (Brav)',
+    'naor_lp_rounding': 'LP-rounding (Naor)'
+    # 'meta_threshold': 'threshold (meta)'
     # 'GNN1': 'GNN1',
     # 'GNN2': 'GNN2',
 }
 
 color_map = {
     'meta_gnn': '#ff1f5b',
-    'learned': '#ff1f5b',
+    #'learned': '#ff1f5b',
     'greedy': '#009ade',
     'greedy_t': '#af58ba',
     'lp_rounding': '#00cd6c',
-    'meta_threshold': '#F9812A'
+    'naor_lp_rounding': '#F9812A'
+    # 'meta_threshold': '#F9812A'
     # 'GNN1': '#009ade',
     # 'GNN2': '#af58ba',
 }
@@ -465,7 +467,7 @@ def load_meta_experiments(configs):
     data = {}
     for config in configs:
         config_str = graph_config_to_string(config)
-        with open(f"experiments/1meta_{config_str}.pickle", 'rb') as handle:
+        with open(f"experiments/meta_{config_str}.pickle", 'rb') as handle:
             data[config_str] = pickle.load(handle)
     return data
 
@@ -490,11 +492,11 @@ def _plot_meta_ratios(
             if model != 'num_trials':
                 avg_ratios[model] = []
                 for raw_crs in cr_by_ratio:
-                    mean = np.mean(raw_crs)
+                    mean = np.nanmean(raw_crs)
                     ci_lb, ci_ub = st.norm.interval(
                         alpha=0.95, 
                         loc=mean, 
-                        scale=st.sem(raw_crs)
+                        scale=st.sem(raw_crs, nan_policy='omit')
                     )
                     avg_ratios[model].append((mean, ci_lb, ci_ub))
 

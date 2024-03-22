@@ -13,7 +13,8 @@ _ModelIndex = Tuple[int, int]
 BASELINES = {
     'greedy': dp.greedy,
     'greedy_t': dp.threshold_greedy,
-    'lp_rounding': dp.lp_approx
+    'lp_rounding': dp.lp_approx,
+    'naor_lp_rounding': dp.naor_lp_approx
 }
 
 
