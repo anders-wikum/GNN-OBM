@@ -383,7 +383,13 @@ def _box_plots(data, naming_function = lambda graph_type: graph_type):
 
     i = 0
     for graph_type, comp_ratios in data.items():
-        all_data = np.stack([comp_ratios[model] for model in model_order]).T
+        all_data = []
+        labels = []
+        for model in model_order:
+            if model in comp_ratios:
+                all_data.append(comp_ratios[model])
+                labels.append(label_map[model])
+        all_data = np.stack(all_data).T
 
         # source: https://matplotlib.org/stable/gallery/statistics/boxplot_color.html#sphx-glr-gallery-statistics-boxplot-color-py
         # rectangular box plot
@@ -411,7 +417,7 @@ def _box_plots(data, naming_function = lambda graph_type: graph_type):
         i += 1
     fig.legend(
         [bplot["boxes"][j] for j in range(len(bplot["boxes"]))], 
-        label_map.values(),
+        labels,
         bbox_to_anchor=(1.10, 0.25),
         loc='lower right',
         fontsize=15
