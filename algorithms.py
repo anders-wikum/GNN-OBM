@@ -286,8 +286,8 @@ def _compute_proposal_probs(x, p):
 def _vec_binomial(p: _Array):
     return np.array([np.random.binomial(1, pt) for pt in p]).astype(bool)
 
-def _online_lp_rounding(x, A, p, noisy_A, noisy_p, coin_flips):
-
+def _online_lp_rounding(x, instance: _Instance, coin_flips):
+    A, _, noisy_A, noisy_p = instance
     proposal_probs = _compute_proposal_probs(x, noisy_p)
     matching = []
     val = 0
@@ -319,7 +319,7 @@ def _online_lp_rounding(x, A, p, noisy_A, noisy_p, coin_flips):
 def lp_approx(instance: _Instance, coin_flips: _Array, **kwargs):
     # _, _, noisy_A, noisy_p = instance
     # x, _ = lp_match(noisy_A, noisy_p, verbose=False)
-    return _online_lp_rounding(kwargs["x"], *instance, coin_flips)
+    return _online_lp_rounding(kwargs["x"], instance, coin_flips)
 
 def _naor_scaling(x, s, eps, delta, theta):
     a = np.maximum(theta, s)

@@ -159,8 +159,8 @@ def graph_config_to_string(config):
         return f"OSMNX_{config['location']}"
 
 label_map = {
-    'meta_gnn': 'MAGNOLIA (meta)',
-    #'learned': 'MAGNOLIA',
+    # 'meta_gnn': 'MAGNOLIA (meta)',
+    'learned': 'MAGNOLIA',
     'greedy': 'greedy',
     'greedy_t': 'greedy-t',
     'lp_rounding': 'LP-rounding (Brav)',

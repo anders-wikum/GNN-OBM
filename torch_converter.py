@@ -7,6 +7,7 @@ from numpy.random import Generator
 from torch_geometric.data import Data
 from typing import List, Tuple, Optional
 from copy import deepcopy
+import time
 
 def _gen_mask(size: tuple, slice: object) -> _Array:
     mask = torch.zeros(size)
@@ -95,8 +96,7 @@ def _gen_graph_features(m, n, offline_nodes, t):
 
 def init_pyg(
     instance: _Instance,
-    rng: Generator,
-    base_models: List[torch.nn.Module] | None
+    rng: Generator
 ) -> Data:
     '''
     Initializes a PyG data object representing the problem instance (A, p, noisy_A, noisy_p).
@@ -113,8 +113,7 @@ def init_pyg(
     neighbors = _neighbor_encoder(A, offline_nodes, t)
     graph_features = _gen_graph_features(m, n, offline_nodes, t)
 
-
-    pyg_graph = Data(
+    return Data(
         x=x,
         edge_index=edge_index,
         edge_attr=edge_attr,
@@ -124,42 +123,17 @@ def init_pyg(
         n=torch.tensor([n])
     )
 
-    if base_models is None:
-        return pyg_graph
-    
-    model_predictions = [
-        model.batch_return_predictions([pyg_graph]).cpu()
-        for model in base_models
-    ]
-    
-    model_predictions = torch.cat(model_predictions).T
-    pyg_graph.base_model_preds = model_predictions.type(torch.FloatTensor)
-    return pyg_graph 
-
 
 def update_pyg(
     data: Data,
     instance: _Instance,
     choice: int,
     t: int,
-    offline_nodes: frozenset,
-    base_models: List[torch.nn.Module] | None
+    offline_nodes: frozenset
 ) -> None:
     
     A, _, _, _ = instance
     m, n = A.shape
-
-    def _remove_old_predictions():
-        data.base_model_preds = torch.tensor([])
-
-    def _add_new_predictions():
-        model_predictions = [
-                model.batch_return_predictions([data]).cpu()
-                for model in base_models
-            ]
-        model_predictions = torch.cat(model_predictions).T
-        data.base_model_preds = model_predictions.type(torch.FloatTensor)
-
 
     def _filter_choice_edges(edge_index, edge_attr):
         mask = ((edge_index != choice) & (edge_index != n + t - 1)).all(dim=0)
@@ -195,14 +169,22 @@ def update_pyg(
         else:
             data.graph_features[1] = (m - t - 1) / num_offline
 
-    _remove_old_predictions()
+    node_start = time.perf_counter()
     _update_node_features()
+    node_end = time.perf_counter()
+    edge_start = time.perf_counter()
     _update_edges()
+    edge_end = time.perf_counter()
+    graph_start = time.perf_counter()
     _update_graph_features()
+    graph_end = time.perf_counter()
+    neighbor_start = time.perf_counter()
     _update_neighbors()
-    
-    if base_models is not None:
-        _add_new_predictions()
+    neighbor_end = time.perf_counter()
+    # print(f"Node update: {node_end - node_start}")
+    # print(f"Edge update: {edge_end - edge_start}")
+    # print(f"Graph update: {graph_end - graph_start}")
+    # print(f"Neighbor update: {neighbor_end - neighbor_start}")
 
 
 def label_pyg(data: Data, y: _Array) -> Data:
@@ -230,7 +212,6 @@ def _skip_class(instance, offline_nodes, t, cache, **kwargs):
 
     # return [1 * (np.argmax(hint) == len(hint) - 1)]
     return hint
-
 
 
 def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
@@ -268,34 +249,20 @@ def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
         label[max_indices[0]] = 1
     
     return label
-    
-    
 
-
-LABEL_FUNCS = {
+    
+TARGET_FUNCS = {
     'regression': _marginal_vtg,
     'classification': _skip_class,
     'meta': _meta_ratios
 }
 
-SAMPLE_INIT_FUNCS = {
-    'gnn': init_pyg
-}
-
-SAMPLE_UPDATE_FUNCS = {
-    'gnn': update_pyg
-}
-
-SAMPLE_LABEL_FUNCS = {
-    'gnn': label_pyg
-}
 
 def _instance_to_sample_path(
     instance: _Instance,
-    label_fn: callable,
+    target_fn: callable,
     cache: dict,
     rng: Generator,
-    meta_net_type: str | None,
     base_models: List[object] | None
 ):
     A, _, _, _ = instance
@@ -305,11 +272,7 @@ def _instance_to_sample_path(
     # There is a disctinction between the pyg graph for the base models and the
     # pyg graph for the meta model, the latter includes base model predictions as
     # a node feature
-    pyg_graph = SAMPLE_INIT_FUNCS['gnn'](instance, rng, base_models)
-    if base_models is None or meta_net_type == 'gnn':
-        sample_data = pyg_graph
-    else:
-        sample_data = SAMPLE_INIT_FUNCS[meta_net_type](instance, rng)
+    pyg_graph = init_pyg(instance, rng)
 
     sample_path = []
     offline_nodes = frozenset(np.arange(n))
@@ -318,7 +281,7 @@ def _instance_to_sample_path(
     for t in range(m):
         if len(offline_nodes) > 0:
             # Generate labels for current execution state
-            labels = label_fn(
+            targets = target_fn(
                 instance,
                 offline_nodes,
                 t,
@@ -326,10 +289,9 @@ def _instance_to_sample_path(
                 **kwargs
             )
 
-            if not np.all(labels == 0):
+            if not np.all(targets == 0):
                 # Label data, add to sample path
-                labeled_sample = \
-                    SAMPLE_LABEL_FUNCS[meta_net_type](sample_data, labels)
+                labeled_sample = label_pyg(pyg_graph, targets)
                 sample_path.append(labeled_sample)
 
        
@@ -339,26 +301,13 @@ def _instance_to_sample_path(
 
             if t < m - 1 and len(offline_nodes) > 0:
                 # Update the pyg graph for the base models
-                SAMPLE_UPDATE_FUNCS['gnn'](
+                update_pyg(
                     pyg_graph,
                     instance,
                     choice,
                     t + 1,
-                    offline_nodes,
-                    base_models
-
+                    offline_nodes
                 )
-
-                if meta_net_type != 'gnn':
-                    SAMPLE_UPDATE_FUNCS[meta_net_type](
-                        sample_data,
-                        instance,
-                        choice,
-                        t + 1, 
-                        offline_nodes,
-                        base_models
-
-                    )
 
     return sample_path
 
@@ -366,23 +315,21 @@ def _instance_to_sample_path(
 def _instances_to_train_samples(
     instances: List[_Instance],
     head: str,
-    meta_model_type: Optional[str] = 'gnn',
     base_models: Optional[List[object]] = None,
 ) -> list:
     
     samples = []
     rng = np.random.default_rng()
-    label_fn = LABEL_FUNCS[head]
+    target_fn = TARGET_FUNCS[head]
 
     for instance in instances:
         cache = cache_stochastic_opt(instance[0], instance[1])
         samples.extend(
             _instance_to_sample_path(
                 instance,
-                label_fn,
+                target_fn,
                 cache,
                 rng,
-                meta_model_type,
                 base_models
             )
         )

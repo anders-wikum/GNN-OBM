@@ -223,12 +223,8 @@ def _train(
         model.train()
 
         for batch in train_loader:
-            if type(batch) is list:
-                batch = (batch[0].to(device), batch[1].to(device))
-                scale = batch[0].size(dim=0)
-            else:
-                batch.to(device)
-                scale = batch.num_graphs
+            batch.to(device)
+            scale = batch.num_graphs
             opt.zero_grad()
 
             pred = model(batch)
@@ -275,12 +271,8 @@ def _test(loader, test_model, loss_fn, acc_fn, device):
     total_accuracy = 0
 
     for batch in loader:
-        if type(batch) is list:
-            batch = (batch[0].to(device), batch[1].to(device))
-            scale = batch[0].size(dim=0)
-        else:
-            batch.to(device)
-            scale = batch.num_graphs
+        batch.to(device)
+        scale = batch.num_graphs
         with torch.no_grad():
             pred = test_model(batch)
             loss = loss_fn(pred, batch)

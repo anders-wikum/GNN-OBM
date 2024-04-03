@@ -107,6 +107,7 @@ class OBM_GENConv(torch.nn.Module):
             choices = []
             for batch in batches:
                 batch.to(self.device)
+                
                 pred = self(batch)
                 choices.append(_vtg_greedy_choices(pred, batch))
             return torch.cat(choices)
