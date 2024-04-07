@@ -1,9 +1,10 @@
-from params import SAMPLER_SPECS, GRAPH_TYPES, _Array, _Instance
-from util import _random_subset, _load_gmission, _load_osmnx
 import numpy as np
+
 from numpy.random import Generator
 from typing import List, Tuple
 
+from params import SAMPLER_SPECS, GRAPH_TYPES, _Array, _Instance
+from util import _random_subset, _load_gmission, _load_osmnx
 
 
 def _add_uniform_weights(

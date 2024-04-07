@@ -1,19 +1,21 @@
-from itertools import chain, combinations
+import ast
+import math
+import matplotlib
+import pickle
+import torch
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from params import _Array
-from torch_geometric.data import InMemoryDataset
-from numpy.random import Generator
-from copy import copy
-import torch
-import math
-import matplotlib.pyplot as plt
 import scipy.stats as st 
-import pickle
-import ast
 
+from itertools import chain, combinations
 from matplotlib.ticker import MultipleLocator, AutoMinorLocator, FuncFormatter
-import matplotlib
+from numpy.random import Generator
+from torch_geometric.data import InMemoryDataset
+
+from params import _Array
+
+
 matplotlib.rcParams['mathtext.fontset'] = 'stix'
 matplotlib.rcParams['font.family'] = 'STIXGeneral'
 plt.rcParams['text.usetex'] = False
@@ -50,22 +52,6 @@ def _vtg_greedy_choices(pred: torch.Tensor, batch: Dataset) -> torch.Tensor:
     
     return torch.where(choices < batch.n, choices, -1)
 
-def _vtg_predictions(pred: torch.Tensor, batch: Dataset) -> torch.Tensor:
-    # Returns the model's predictions, masked to only keep the neighbor predictions
-    try:
-        batch_size = batch.ptr.size(dim=0) - 1
-    except:
-        batch_size = 1
-
-    return torch.mul(
-        pred.view(batch_size, -1),
-        batch.neighbors.view(batch_size, -1)
-    )
-
-
-def fill_list(value: object, size: int):
-    return [copy(value) for _ in range(size)]
-
 
 def powerset(iterable):
     "powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
@@ -90,15 +76,6 @@ def _random_subset(seq, m, rng: Generator):
         targets.add(x)
 
     return targets
-
-
-def _symmetrize(adj):
-    n, m = adj.shape
-    A = np.zeros((n + m, n + m))
-    A[:n, n:] = adj
-    A[n:, :n] = adj.T
-    return A
-
 
 def _neighbors(A: _Array, S: set, t: int) -> _Array:
     return [u for u in S if A[t, u] > 0]
@@ -142,7 +119,7 @@ def _extract_batch(batch):
 
 
 def _flip_coins(p: _Array, rng: Generator) -> _Array:
-    return np.vectorize(lambda x: rng.binomial(1, x))(p)
+    return rng.binomial(1, p)
 
 
 def graph_config_to_string(config):
@@ -273,10 +250,7 @@ def _plot_approx_ratios_all(ratios, data, naming_function = lambda graph_type: g
     k = 4
     fontsize = 20
     fontsize2 = 20
-    # fontsize = 15
-    # fontsize2 = 20
     num_subplots = len(data.keys())
-    # fig, ax = plt.subplots(k, num_subplots//k, sharex=True, sharey=True, figsize=(24,32))
     fig, ax = plt.subplots(k, num_subplots//k, sharex=True, sharey=True, figsize=(12,16))
     fig.add_subplot(111, frameon=False)
 

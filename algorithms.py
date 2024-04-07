@@ -1,14 +1,15 @@
 import gurobipy as gp
-import numpy as np
 import itertools as it
-
-from params import _Array, _Instance
-from util import powerset, diff, _neighbors
-from scipy.optimize import linear_sum_assignment
-from typing import Optional
-from gurobipy import GRB
-import time
 import multiprocessing as mp
+import numpy as np
+
+from numpy.random import Generator
+from scipy.optimize import linear_sum_assignment
+from typing import Optional, Tuple
+
+from params import _Array, _Instance, _Matching
+from util import powerset, diff, _neighbors
+
 
 
 def cache_stochastic_opt(A: _Array, p: _Array) -> dict:
@@ -92,7 +93,8 @@ def stochastic_opt(
     A: _Array,
     coin_flips: _Array,
     cache: dict
-):
+) -> Tuple[_Matching, float]:
+    
     m, n = A.shape
     offline_nodes = frozenset(np.arange(n))
     matching = []
@@ -112,14 +114,15 @@ def stochastic_opt(
 def greedy(
     instance: _Instance,
     coin_flips: _Array
-):
+) -> Tuple[_Matching, float]:
+    
     return threshold_greedy(instance, coin_flips, 0)
 
 def threshold_greedy(
     instance: _Instance,
     coin_flips: _Array,
     threshold: float
-):
+) -> Tuple[_Matching, float]:
     A, _, noisy_A, _ = instance
     m, n = A.shape
 
@@ -141,7 +144,7 @@ def threshold_greedy(
     return matching, value
 
 
-def offline_opt(A: _Array, coin_flips: _Array):
+def offline_opt(A: _Array, coin_flips: _Array) -> Tuple[_Matching, float]:
     A = np.copy(A)
     m = A.shape[0]
     for t in range(m):
@@ -157,7 +160,7 @@ def offline_opt(A: _Array, coin_flips: _Array):
 def _build_variables(model: gp.Model, indices: list) -> gp.Var:
     return model.addVars(
         indices,
-        vtype=GRB.CONTINUOUS,
+        vtype=gp.GRB.CONTINUOUS,
         lb=0,
         name='x'
     )
@@ -208,37 +211,11 @@ def _build_objective(
     
     model.setObjective(
         gp.quicksum(x[(i, t)] * A[t, i] for (i, t) in indices),
-        GRB.MAXIMIZE
+        gp.GRB.MAXIMIZE
     )
 
-def _scale_mat_by_vec(A: _Array, b: _Array) -> _Array:
-    ''' 
-    Given a matrix [A] and vector [b], gives the matrix formed by multiplying
-    the first row of A by b_1, the second row of A by b_2, and so on.
-    '''
-    return (A.T * b).T
 
-def _compute_s(x: _Array):
-    return np.cumsum(
-        np.vstack([np.zeros(shape=(1, x.shape[1])), x]),
-        axis=0
-    )[:-1]
-
-
-def _validate_feasibility(x: _Array, p: _Array) -> _Array:
-    s = _compute_s(x)
-    x = np.maximum(x, 0)
-    x = np.minimum(x, _scale_mat_by_vec(1 - s, p))
-
-    eps = np.finfo(np.float32).eps
-    assert np.all(x.sum(axis=0) - 1 <= eps)
-    assert np.all(x.sum(axis=1) - p <= eps)
-    assert np.all(x >= -eps)
-    assert np.all(x <= _scale_mat_by_vec(1 - s, p) + eps)
-
-    return x
-
-def lp_match(input, verbose: Optional[bool] = False) -> _Array:
+def _lp_match(input, verbose: Optional[bool] = False) -> _Array:
 
     noisy_A, noisy_p = input
     m, n = noisy_A.shape
@@ -259,10 +236,24 @@ def lp_match(input, verbose: Optional[bool] = False) -> _Array:
     return output
 
 
-def call_model(inputs):
+def parallel_solve(inputs):
     pool = mp.Pool(mp.cpu_count())
-    results = np.array(pool.map(lp_match, inputs))
-    return results
+    return np.array(pool.map(_lp_match, inputs))
+
+
+def _scale_mat_by_vec(A: _Array, b: _Array) -> _Array:
+    ''' 
+    Given a matrix [A] and vector [b], gives the matrix formed by multiplying
+    the first row of A by b_1, the second row of A by b_2, and so on.
+    '''
+    return (A.T * b).T
+
+
+def _compute_s(x: _Array):
+    return np.cumsum(
+        np.vstack([np.zeros(shape=(1, x.shape[1])), x]),
+        axis=0
+    )[:-1]
 
 
 def _compute_proposal_probs(x, p):
@@ -276,50 +267,12 @@ def _compute_proposal_probs(x, p):
     proposal_probs = np.where(proposal_probs <= 1, proposal_probs, 1)
     proposal_probs = np.round(proposal_probs, 5)
     proposal_probs = np.where(proposal_probs >= 0, proposal_probs, 0)
-
     
     assert (np.all(proposal_probs >= 0)), f"{proposal_probs[proposal_probs < 0]}"
     assert (np.all(proposal_probs <= 1)), f"{proposal_probs[proposal_probs > 1]}"
     
     return proposal_probs
 
-def _vec_binomial(p: _Array):
-    return np.array([np.random.binomial(1, pt) for pt in p]).astype(bool)
-
-def _online_lp_rounding(x, instance: _Instance, coin_flips):
-    A, _, noisy_A, noisy_p = instance
-    proposal_probs = _compute_proposal_probs(x, noisy_p)
-    matching = []
-    val = 0
-    offline_mask = np.array(noisy_A.shape[1] * [True])
-    m, n = x.shape
-    
-    for t in range(m):
-        if coin_flips[t]:
-            proposals = _vec_binomial(proposal_probs[t])
-            valid_proposals = np.bitwise_and(offline_mask, proposals)
-
-            if not np.all(valid_proposals == 0):
-                matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
-                matching.append((t, matched_node))
-                val += A[t, matched_node]
-                offline_mask[matched_node] = 0
-                valid_proposals[matched_node] = 0
-                rejections = _vec_binomial(n * [noisy_p[t]])
-                new_rejections = np.bitwise_and(
-                    rejections,
-                    valid_proposals
-                )
-   
-                keep_nodes = np.invert(new_rejections)
-                offline_mask = np.bitwise_and(offline_mask, keep_nodes)
-    return matching, val
-
-
-def lp_approx(instance: _Instance, coin_flips: _Array, **kwargs):
-    # _, _, noisy_A, noisy_p = instance
-    # x, _ = lp_match(noisy_A, noisy_p, verbose=False)
-    return _online_lp_rounding(kwargs["x"], instance, coin_flips)
 
 def _naor_scaling(x, s, eps, delta, theta):
     a = np.maximum(theta, s)
@@ -364,26 +317,24 @@ def _get_candidates(m, n, bins, rng):
                     candidates[t, i] = 1
     return candidates.astype(bool)
 
-def naor_lp_approx(instance: _Instance, coin_flips: _Array, **kwargs):
-    eps = 0.0480
-    delta = 0.0643
-    theta = delta / (eps + delta)
-
+def _lp_approx(
+    x: _Array,
+    instance: _Instance,
+    coin_flips: _Array,
+    proposal_prob_fn: callable,
+    candidate_fn: callable,
+    rng: Generator
+) -> Tuple[_Matching, float]:
+    
     A, _, noisy_A, noisy_p = instance
-
-    # x, _ = lp_match(noisy_A, noisy_p, verbose=False)
-    x = kwargs["x"]
     m, n = x.shape
 
-    s = _compute_s(x)
-    x_hat = _naor_scaling(x, s, eps, delta, theta)
-    proposal_probs = _compute_proposal_probs(x_hat, noisy_p)
-    mask = (proposal_probs <= theta)
-    avail_mask = np.array(n * [True])
     matching = []
     val = 0
-    bins = _first_fit(proposal_probs, mask)
-    candidates = _get_candidates(m, n, bins, np.random.default_rng(seed=0))
+    avail_mask = np.array(n * [True])
+
+    proposal_probs = proposal_prob_fn(x, noisy_p)
+    candidates = candidate_fn(proposal_probs, rng)
 
     for t in range(m):
         if coin_flips[t]:
@@ -395,6 +346,62 @@ def naor_lp_approx(instance: _Instance, coin_flips: _Array, **kwargs):
                 matching.append((t, matched_node))
                 val += A[t, matched_node]
                 avail_mask[matched_node] = 0
-
-
     return matching, val
+
+
+def braverman_lp_approx(
+    x: _Array,
+    instance: _Instance,
+    coin_flips: _Array,
+    rng: Generator
+) -> Tuple[_Matching, float]:
+    
+    def _candidate_fn(proposal_probs, rng):
+        return rng.binomial(1, proposal_probs)
+    
+    def _proposal_prob_fn(x, p):
+        return _compute_proposal_probs(x, p)
+    
+    return _lp_approx(
+        x,
+        instance,
+        coin_flips,
+        _proposal_prob_fn,
+        _candidate_fn,
+        rng
+    )
+
+
+def naor_lp_approx(
+    x: _Array,
+    instance: _Instance,
+    coin_flips: _Array,
+    rng: Generator
+) -> Tuple[_Matching, float]:
+
+    def _proposal_prob_fn(x, p):
+        eps = 0.0480
+        delta = 0.0643
+        theta = delta / (eps + delta)
+
+        s = _compute_s(x)
+        x_hat = _naor_scaling(x, s, eps, delta, theta)
+        return _compute_proposal_probs(x_hat, p)
+    
+    def _candidate_fn(proposal_probs, rng):
+        eps = 0.0480
+        delta = 0.0643
+        theta = delta / (eps + delta)
+        m, n = proposal_probs.shape
+
+        bins = _first_fit(proposal_probs, (proposal_probs <= theta))
+        return _get_candidates(m, n, bins, rng)
+    
+    return _lp_approx(
+        x,
+        instance,
+        coin_flips,
+        _proposal_prob_fn,
+        _candidate_fn,
+        rng
+    )

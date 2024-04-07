@@ -1,25 +1,27 @@
-from params import _Array, _Instance
-from algorithms import one_step_stochastic_opt, cache_stochastic_opt
-from util import diff, _neighbors
-import numpy as np
 import torch
+import numpy as np
+
+from copy import deepcopy
 from numpy.random import Generator
 from torch_geometric.data import Data
 from typing import List, Tuple, Optional
-from copy import deepcopy
-import time
 
-def _gen_mask(size: tuple, slice: object) -> _Array:
+from algorithms import one_step_stochastic_opt, cache_stochastic_opt
+from params import _Array, _Instance
+from util import diff, _neighbors
+
+
+def _gen_mask(size: tuple, slice: object) -> torch.Tensor:
     mask = torch.zeros(size)
     mask[slice] = 1
-    return mask
+    return torch.tensor(mask)
 
 
-def _positional_encoder(size: int, rng: Generator):
+def _positional_encoder(size: int, rng: Generator) -> torch.Tensor:
     return torch.tensor(rng.uniform(0, 1, size))
 
 
-def _arrival_encoder(p: _Array, t: int, size: int):
+def _arrival_encoder(p: _Array, t: int, size: int) -> torch.Tensor:
     p = np.copy(p)
     p[t] = 1
     p[:t] = 1
@@ -27,13 +29,20 @@ def _arrival_encoder(p: _Array, t: int, size: int):
     return torch.tensor([*([0] * fill_size), *p, 0])
 
 
-def _neighbor_encoder(A, offline_nodes, t):
+def _neighbor_encoder(A, offline_nodes, t) -> torch.Tensor:
     m, n = A.shape
     N_t = _neighbors(A, offline_nodes, t)
     return torch.tensor([*[u in N_t for u in np.arange(n + m)], True])
 
 
-def _gen_node_features(m: int, n: int, p: _Array, t: int, rng: Generator):
+def _gen_node_features(
+    m: int,
+    n: int,
+    p: _Array,
+    t: int,
+    rng: Generator
+) -> torch.Tensor:
+    
     pos_encoder = _positional_encoder(n + m + 1, rng)
     offline_mask = _gen_mask(n + m + 1, slice(0, n, 1))
     arrival_probs = _arrival_encoder(p, t, n + m + 1)
@@ -52,7 +61,11 @@ def _gen_node_features(m: int, n: int, p: _Array, t: int, rng: Generator):
 
 
 
-def _gen_edge_features(A: _Array, A_values: _Array) -> Tuple[torch.tensor, torch.tensor]:
+def _gen_edge_features(
+    A: _Array,
+    noisy_A: _Array
+) -> Tuple[torch.tensor, torch.tensor]:
+    
     # A is used to decide if an edge is added, A_values is used
     # to add the values to edge_attr. This is useful to use noisy
     # weight values 
@@ -65,8 +78,8 @@ def _gen_edge_features(A: _Array, A_values: _Array) -> Tuple[torch.tensor, torch
             if A[i, j] > 0:
                 edge_index.append([j, n + i])
                 edge_index.append([n + i, j])
-                edge_attr.append([A_values[i, j]])
-                edge_attr.append([A_values[i, j]])
+                edge_attr.append([noisy_A[i, j]])
+                edge_attr.append([noisy_A[i, j]])
     
     # Add edges to virtual node representing no match
     for i in range(0, m):
@@ -79,10 +92,13 @@ def _gen_edge_features(A: _Array, A_values: _Array) -> Tuple[torch.tensor, torch
     edge_attr = torch.tensor(edge_attr).type(torch.FloatTensor)
     return edge_index, edge_attr
 
-def _gen_graph_features(m, n, offline_nodes, t):
-    # ratio = torch.tensor([(m - t) / len(offline_nodes)] * (n + m + 1))
-    # t = torch.tensor([t] * (n + m + 1))
-
+def _gen_graph_features(
+    m: int,
+    n: int,
+    offline_nodes: frozenset,
+    t: int
+) -> torch.Tensor:
+    
     ratio = torch.Tensor([(m - t) / len(offline_nodes)])
     t = torch.Tensor([t])
 
@@ -169,22 +185,11 @@ def update_pyg(
         else:
             data.graph_features[1] = (m - t - 1) / num_offline
 
-    node_start = time.perf_counter()
     _update_node_features()
-    node_end = time.perf_counter()
-    edge_start = time.perf_counter()
     _update_edges()
-    edge_end = time.perf_counter()
-    graph_start = time.perf_counter()
     _update_graph_features()
-    graph_end = time.perf_counter()
-    neighbor_start = time.perf_counter()
     _update_neighbors()
-    neighbor_end = time.perf_counter()
-    # print(f"Node update: {node_end - node_start}")
-    # print(f"Edge update: {edge_end - edge_start}")
-    # print(f"Graph update: {graph_end - graph_start}")
-    # print(f"Neighbor update: {neighbor_end - neighbor_start}")
+
 
 
 def label_pyg(data: Data, y: _Array) -> Data:
@@ -192,7 +197,13 @@ def label_pyg(data: Data, y: _Array) -> Data:
     return deepcopy(data)
 
 
-def _marginal_vtg(instance, offline_nodes, t, cache, **kwargs):
+def _marginal_vtg(
+    instance: _Instance,
+    offline_nodes: frozenset, 
+    t: int,
+    cache: dict,
+    **kwargs
+) -> _Array:
     A, _, _, _ = instance
     hint = one_step_stochastic_opt(
         A, offline_nodes, t, cache
@@ -201,20 +212,14 @@ def _marginal_vtg(instance, offline_nodes, t, cache, **kwargs):
     return hint - hint[-1]
 
 
-def _skip_class(instance, offline_nodes, t, cache, **kwargs):
-    A, _, _, _ = instance
-    # Return the actual value to go. It is turned into a discrete
-    # label when computing loss/accuracy (it makes passing the values 
-    # around easier for batching)
-    hint = one_step_stochastic_opt(
-        A, offline_nodes, t, cache
-    )
-
-    # return [1 * (np.argmax(hint) == len(hint) - 1)]
-    return hint
-
-
-def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
+def _meta_ratios(
+    instance: _Instance,
+    offline_nodes: frozenset,
+    t: int,
+    cache: dict, 
+    **kwargs
+) -> _Array:
+    
     A, _, _, _ = instance
     hint = one_step_stochastic_opt(
         A, offline_nodes, t, cache
@@ -253,10 +258,8 @@ def _meta_ratios(instance, offline_nodes, t, cache, **kwargs):
     
 TARGET_FUNCS = {
     'regression': _marginal_vtg,
-    'classification': _skip_class,
     'meta': _meta_ratios
 }
-
 
 def _instance_to_sample_path(
     instance: _Instance,
@@ -264,7 +267,7 @@ def _instance_to_sample_path(
     cache: dict,
     rng: Generator,
     base_models: List[object] | None
-):
+) -> List[Data]:
     A, _, _, _ = instance
     m, n = A.shape
 
@@ -316,7 +319,7 @@ def _instances_to_train_samples(
     instances: List[_Instance],
     head: str,
     base_models: Optional[List[object]] = None,
-) -> list:
+) -> List[Data]:
     
     samples = []
     rng = np.random.default_rng()

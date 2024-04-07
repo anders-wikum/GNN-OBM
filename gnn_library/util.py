@@ -1,19 +1,23 @@
-import torch
-import pickle
-import copy
+
 import optuna
+import pickle
+import torch
+
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+
+from copy import deepcopy
 from torch_geometric.data import InMemoryDataset
 from torch_geometric.loader import DataLoader
 from tqdm import trange
-from .params import NETWORKS, MODEL_SAVE_FOLDER
-from util import objectview
 from typing import Optional
+
 from instance_generator import sample_instances
+from .params import NETWORKS, MODEL_SAVE_FOLDER
 from torch_converter import _instances_to_train_samples
+from util import objectview
 
 
 class Dataset(InMemoryDataset):
@@ -43,38 +47,6 @@ class MaskedMSELoss(nn.Module):
         preds = pred[neighbor_mask].squeeze(dim=1)
         return F.mse_loss(preds, value_to_go)
 
-
-class pygCrossEntropyLoss(nn.Module):
-
-    def __init__(self):
-        super(pygCrossEntropyLoss, self).__init__()
-
-    def forward(self, pred, batch):
-        criterion = nn.BCELoss()
-        sig = nn.Sigmoid()
-
-        hints = batch.hint
-
-        # Only consider neighbors of the current online node
-        neighbor_mask = batch.neighbors
-        pred_per_graph = pred[neighbor_mask].squeeze(dim=1).T
-        batch_index = batch.batch[neighbor_mask]
-
-        # Get the predicted node per graph
-        mask = torch.arange(len(torch.unique(batch.batch))).unsqueeze(1).to(pred_per_graph.device) == batch_index.unsqueeze(0)
-        pred_per_graph = torch.where(mask, pred_per_graph, float('-inf'))
-
-        # Create an array that is 1 only 
-        maximizers = torch.argmax(torch.where(mask, hints.unsqueeze(0), float('-inf')), dim=1)
-        hints_per_graph = torch.zeros_like(pred_per_graph)
-        hints_per_graph[torch.arange(maximizers.shape[0]), maximizers] = 1
-        pred_per_graph = sig(pred_per_graph)
-
-        return criterion(
-            pred_per_graph,
-            hints_per_graph
-        )
-    
 
 class metaCrossEntropyLoss(nn.Module):
 
@@ -122,8 +94,6 @@ def build_optimizer(args, params):
 def _get_loss(args):
     if args.head == 'regression':
         return MaskedMSELoss()
-    elif args.head == 'classification':
-        return pygCrossEntropyLoss()
     elif args.head == 'meta':
         return metaCrossEntropyLoss()
     else:
@@ -132,8 +102,6 @@ def _get_loss(args):
 def _get_acc(args):
     if args.head == 'regression':
         return _regression_accuracy
-    elif args.head == 'classification':
-        return _classification_accuracy
     else:
         return lambda x, y: 0
     
@@ -178,21 +146,6 @@ def _regression_accuracy(pred, batch):
 
     return torch.sum(pred_per_graph == hints_per_graph) / pred_per_graph.shape[0]
 
-def _classification_accuracy(pred, batch):
-
-    # Only consider neighbors of the current online node
-    hints = batch.hint
-    neighbor_mask = batch.neighbors
-    preds = pred[neighbor_mask].squeeze(dim=1)
-    batch_index = batch.batch[neighbor_mask]
-
-    # Get the predicted node per graph
-    mask = torch.arange(len(torch.unique(batch.batch))).unsqueeze(1).to(preds.device) == batch_index.unsqueeze(0)
-    pred_per_graph = torch.argmax(torch.where(mask, preds.unsqueeze(0), float('-inf')), dim=1)
-    hints = torch.argmax(torch.where(mask, hints.unsqueeze(0), float('-inf')), dim=1)
-    # hints = batch.hint.type(torch.LongTensor).to(pred_per_graph.device)
-
-    return torch.sum(pred_per_graph == hints) / pred_per_graph.shape[0]
 
 def _train(
         model: object,
@@ -248,7 +201,7 @@ def _train(
             test_accuracies.append(test_accuracy)
             if best_loss is None or test_loss < best_loss:
                 best_loss = test_loss
-                best_model = copy.deepcopy(model)
+                best_model = deepcopy(model)
 
             # Report the test to the tuner
             if trial is not None:
@@ -364,4 +317,3 @@ def gen_train_input(train_config: dict, args: dict, seed: int, base_models: Opti
     )
 
     return train_loader, val_loader
-

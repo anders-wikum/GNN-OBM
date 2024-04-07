@@ -1,22 +1,25 @@
-import torch
-import torch_converter as pc
-import algorithms as dp
-import numpy as np
-from torch_geometric.loader import DataLoader
-from util import Dataset, diff, fill_list, _flip_coins, _masked_argmax
-from typing import Optional
-from numpy.random import Generator
-from typing import List, Tuple
-from params import _Array, _Instance
-from collections import defaultdict
 import time
+import torch
+import numpy as np
 
-_ModelIndex = Tuple[int, int]
+from collections import defaultdict
+from numpy.random import Generator
+from torch_geometric.loader import DataLoader
+from torch_geometric.data import Batch
+from typing import Optional, List, Tuple
+
+from algorithms import greedy, threshold_greedy, braverman_lp_approx, \
+    naor_lp_approx, offline_opt, parallel_solve
+from torch_converter import init_pyg, update_pyg
+from params import _Instance
+from util import Dataset, diff, _flip_coins, _masked_argmax
+
+
 BASELINES = {
-    'greedy': dp.greedy,
-    'greedy_t': dp.threshold_greedy,
-    'lp_rounding': dp.lp_approx,
-    'naor_lp_rounding': dp.naor_lp_approx
+    'greedy': greedy,
+    'greedy_t': threshold_greedy,
+    'lp_rounding': braverman_lp_approx,
+    'naor_lp_rounding': naor_lp_approx
 }
 
 
@@ -26,13 +29,13 @@ class StateRealization:
         self.value = 0
         self.matching = []
         self.offline_nodes = frozenset(np.arange(A.shape[1]))
-        self.dataset = pc.init_pyg(instance, rng)
+        self.dataset = init_pyg(instance, rng)
         self.coin_flips = _flip_coins(p, rng)
 
     def update(self, instance, choice: int, t: int):
         A, _, _, _ = instance
+
         # If we don't skip, update state
-        
         state_start = time.perf_counter()
         if choice != -1:
             self.matching.append((t, choice))
@@ -43,7 +46,7 @@ class StateRealization:
         # If still in a relevant timestep, update dataset
         pyg_start = time.perf_counter()
         if t < A.shape[0] - 1:
-            pc.update_pyg(
+            update_pyg(
                 self.dataset,
                 instance,
                 choice,
@@ -61,15 +64,9 @@ class ExecutionState:
         num_realizations: int,
         rng: Generator
     ):
-        (A, p, noisy_A, noisy_p) = instance
+        self.A, self.p, self.noisy_A, self.noisy_p = instance
         self.instance = instance
-        self.A = A
-        self.size = A.shape
-        self.p = p
-        self.noisy_A = noisy_A
-        self.noisy_p = noisy_p
-
-
+  
         self.state_realizations = [
             StateRealization(instance, rng)
             for _ in range(num_realizations)
@@ -91,27 +88,75 @@ class ParallelExecutionState:
             ExecutionState(instance, num_realizations, rng)
             for instance in instances
         ]
-    
-
-    def _heuristic_model_assign(self, meta_model):
-        online_offline_ratios = np.array([
-            realized_state.dataset.graph_features[1].item()
-            for execution_state in self.execution_states
-            for realized_state in execution_state.state_realizations
-        ])
-        if meta_model is None:
-            return np.zeros(online_offline_ratios.shape[0]).astype(int)
-        return (online_offline_ratios > 1.5).astype(int)
 
 
-    def _gnn_model_assign(
+    def _get_default_model_index(self):
+        return np.zeros(
+            self.num_instances * self.num_realizations
+        ).astype(int)    
+
+
+    def _get_base_predictions(
         self,
-        meta_model: object,
-        base_models: List[torch.nn.Module],
-        batch_size: int
+        batch: Batch,
+        base_models: List[torch.nn.Module]
     ):
         
+        with torch.no_grad():
+            base_pred = torch.concat(
+                [
+                    base_model(batch)
+                    for base_model in base_models
+                ],
+                dim=1
+            )
+            return base_pred
+    
+
+    def _get_predictions(
+        self, 
+        data_loader: DataLoader,
+        meta_model: torch.nn.Module,
+        base_models: List[torch.nn.Module]
+    ):
+        if meta_model is None:
+            index = self._get_default_model_index()
+
         device = next(base_models[0].parameters()).device
+        with torch.no_grad():
+            base_preds = []
+            model_preds = []
+
+            for batch in data_loader:
+                batch.to(device)
+
+                base_pred = self._get_base_predictions(batch, base_models)
+                base_preds.append(base_pred)
+                batch.base_model_preds = base_pred
+
+                if meta_model is not None:
+                    model_pred = torch.argmax(meta_model(batch), dim=1).int()
+                    model_preds.append(model_pred)
+                    index = torch.cat(model_preds)
+
+        return torch.cat(base_preds), index
+
+    @staticmethod
+    def _select_predictions_by_index(
+        base_preds: torch.Tensor, 
+        index: torch.Tensor,
+        num_graphs: int,
+        num_models: int
+    ) -> torch.Tensor:
+        
+        base_preds = base_preds \
+            .reshape(num_graphs, -1, num_models) \
+            .transpose(1, 2)
+    
+        return base_preds[torch.arange(base_preds.size(0)), index]
+    
+
+    def _build_loader(self, batch_size: int) -> Tuple[DataLoader, int]:
 
         data = Dataset([
             realized_state.dataset
@@ -119,77 +164,61 @@ class ParallelExecutionState:
             for realized_state in execution_state.state_realizations
         ])
 
-        if meta_model is None:
-            index = np.zeros(self.num_instances * self.num_realizations).astype(int)
-
-        data_loader = DataLoader(
+        loader =  DataLoader(
             data,
             batch_size=batch_size,
-            shuffle=False
+            shuffle=False,
+            num_workers=0
         )
+        return loader, len(data)
 
-        with torch.no_grad():
-            preds = []
-            base_preds = []
-            for batch in data_loader:
-                batch.to(device)
-
-                # Compute base model predictions
-                base_pred = torch.concat(
-                    [
-                        base_model(batch)
-                        for base_model in base_models
-                    ],
-                    dim=1
-                )
         
-                batch.base_model_preds = base_pred
-                base_preds.append(base_pred)
+    def compute_choices(
+        self,
+        meta_model: torch.nn.Module,
+        base_models: List[torch.nn.Module],
+        batch_size: int
+    ):
 
-                if meta_model is not None:
-                    # Compute meta model predictions
-                    pred = _select_base_model(meta_model, batch).int()
-                    preds.append(pred)
-                    index = torch.cat(preds)
-            # print(f"base_preds: {base_preds[0].size(), base_preds}")
-            
-            base_preds = torch.cat(base_preds) \
-                .reshape(self.num_instances * self.num_realizations, -1, len(base_models)) \
-                .transpose(1, 2)
-            # print(f"reshaped base_preds: {base_preds.size(), base_preds}")
-            # print(f"index")
-            base_preds = base_preds[torch.arange(base_preds.size(0)), index]
-            # print(f"indexed base_preds: {base_preds.size(), base_preds}")
+        data_loader, num_graphs = self._build_loader(batch_size)
 
-        neighbor_mask = torch.cat(
-            [
-                batch.neighbors for batch in data_loader
-            ]
-        ) \
-            .reshape(self.num_instances * self.num_realizations, -1) \
-            .to(device)
-        choices = _masked_argmax(base_preds, neighbor_mask, dim=1)
+        base_preds, index = self._get_predictions(
+            data_loader=data_loader,
+            meta_model=meta_model,
+            base_models=base_models
+        )
+        
+        preds = self._select_predictions_by_index(
+            base_preds,
+            index,
+            num_graphs,
+            len(base_models)
+        ).to('cpu')
+       
+        del index
+
+        neighbor_mask = torch.cat([batch.neighbors for batch in data_loader]) \
+            .reshape(num_graphs, -1)
+        choices = _masked_argmax(preds, neighbor_mask, dim=1)
         choices = torch.where(choices < self.n, choices, -1)
+
+        del preds
         del base_preds
         del neighbor_mask
-        del index
-        return choices
-        
 
+        return choices
             
-    def _model_assign(
-        self,
-        meta_model: object,
-        meta_model_type: str,
-        base_models: List[torch.nn.Module],
-        batch_size: Optional[int] = None
-    ):
-        return self._gnn_model_assign(meta_model, base_models, batch_size)
-        if meta_model_type == 'gnn':
-            return self._gnn_model_assign(meta_model, base_models, batch_size)
-        else:
-            return self._heuristic_model_assign(meta_model)
-            
+    def _get_update_info(self, t: int) -> Tuple[list, list, list]:
+        states = []
+        coin_flips = []
+        instances = []
+        for execution_state in self.execution_states:
+            for real_state in execution_state.state_realizations:
+                states.append(real_state)
+                coin_flips.append(real_state.coin_flips[t])
+                instances.append(execution_state.instance)
+
+        return states, coin_flips, instances
 
     def update(
         self,
@@ -200,23 +229,8 @@ class ParallelExecutionState:
 
         start = time.perf_counter()
         info_acq = time.perf_counter()
-        states = [
-            real_state
-            for execution_state in self.execution_states
-            for real_state in execution_state.state_realizations
-        ]
+        states , coin_flips, instances = self._get_update_info(t)
 
-        coin_flips = [
-            real_state.coin_flips[t]
-            for execution_state in self.execution_states
-            for real_state in execution_state.state_realizations
-        ]
-
-        instances = [
-            execution_state.instance for
-            execution_state in self.execution_states
-            for _ in execution_state.state_realizations
-        ]
         info_acq_end = time.perf_counter()
         times['init'] += info_acq_end - info_acq
 
@@ -241,7 +255,6 @@ class ParallelExecutionState:
 
 
     def compute_competitive_ratios(self, baselines: List[str], **kwargs):
-        m = self.execution_states[0].A.shape[0]
 
         ratios = {
             "learned": np.zeros(
@@ -253,14 +266,13 @@ class ParallelExecutionState:
             for instance in self.instances
         ]
         solve_start = time.perf_counter()
-        lp_outputs = dp.call_model(inputs)
+        lp_outputs = parallel_solve(inputs)
         solve_end = time.perf_counter()
         solve_time = solve_end - solve_start
 
         times = {"lp_solve": solve_time}
         for baseline in baselines: 
             times[baseline] = 0 
-
 
         for baseline in baselines:
             ratios[baseline] = np.zeros(
@@ -272,27 +284,24 @@ class ParallelExecutionState:
             kwargs["naor_lp_rounding"]["x"] = lp_outputs[i]
             
             for j, real_state in enumerate(ex_state.state_realizations):
-                coin_flips = real_state.coin_flips
-                _, OPT = dp.offline_opt(ex_state.A, coin_flips)
+                _, OPT = offline_opt(ex_state.A, real_state.coin_flips)
 
                 if OPT > 0:
                     ratios["learned"][i, j] = real_state.value / OPT
                     for baseline in baselines:
                         base_start = time.perf_counter()
                         _, value = BASELINES[baseline](
-                            ex_state.instance,
-                            real_state.coin_flips,
+                            instance=ex_state.instance,
+                            coin_flips=real_state.coin_flips,
                             **kwargs[baseline]
                         )
                         ratios[baseline][i, j] = value / OPT
                         base_end = time.perf_counter()
                         times[baseline] += base_end - base_start
-           
                         
                 else:
-                    ratios["learned"][i, j] = np.nan
-                    for baseline in baselines:
-                        ratios[baseline][i, j] = np.nan
+                    for method in ratios.keys():
+                        ratios[method][i, j] = np.nan
                         
         avg_ratios = {
             name: list(np.nanmean(ratio_matrix, axis=1))
@@ -302,15 +311,8 @@ class ParallelExecutionState:
         return avg_ratios, times
 
 
-def _select_base_model(meta_model, data) -> object:
-    with torch.no_grad():
-        y = meta_model(data)
-        return torch.argmax(y, dim=1)
-
-
 def evaluate_model(
     meta_model: object,
-    meta_model_type: str,
     base_models: List[torch.nn.Module],
     instances: List[_Instance],
     batch_size: int,
@@ -339,9 +341,8 @@ def evaluate_model(
     for t in range(parallel_state.m):
 
         model_assign_start = time.perf_counter()
-        choices = parallel_state._model_assign(
+        choices = parallel_state.compute_choices(
             meta_model,
-            meta_model_type,
             base_models,
             batch_size
         )
@@ -349,7 +350,7 @@ def evaluate_model(
         assign_time += model_assign_end - model_assign_start
         
         times1 = parallel_state.update(t, choices)
-        for key, val in times1.items():
+        for key, _ in times1.items():
             total_times[key] += times1[key]
     gnn_end = time.perf_counter()
 

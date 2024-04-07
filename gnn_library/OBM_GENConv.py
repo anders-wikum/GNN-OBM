@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GENConv
-from util import _extract_batch, _vtg_greedy_choices, _vtg_predictions
+from util import _extract_batch, _vtg_greedy_choices
 
 
 class OBM_GENConv(torch.nn.Module):
@@ -31,7 +31,6 @@ class OBM_GENConv(torch.nn.Module):
         self.graph_feature_dim = args.graph_feature_dim
         self.dropout = args.dropout
         self.num_layers = args.num_layers
-        self.classify = (args.head in ['classification', 'meta'])
         self.device = args.device
         self.head = args.head
 
@@ -95,12 +94,7 @@ class OBM_GENConv(torch.nn.Module):
             )
         
         x = torch.hstack((x, graph_features.T))
-        x = self.regression_head(x)
-
-        # if self.classify:
-        #     x = x.view(num_graphs, num_nodes, -1)[:, -1, :]    
-
-        return x
+        return self.regression_head(x)   
     
     def batch_select_match_nodes(self, batches):
         with torch.no_grad():
@@ -111,12 +105,3 @@ class OBM_GENConv(torch.nn.Module):
                 pred = self(batch)
                 choices.append(_vtg_greedy_choices(pred, batch))
             return torch.cat(choices)
-
-    def batch_return_predictions(self, batches):
-        with torch.no_grad():
-            predictions = []
-            for batch in batches:
-                batch.to(self.device)
-                pred = self(batch)
-                predictions.append(_vtg_predictions(pred, batch))
-            return torch.cat(predictions)
