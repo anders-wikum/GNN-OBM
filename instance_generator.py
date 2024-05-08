@@ -88,8 +88,8 @@ def _sample_geom_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
     if not weighted:
         return(dist > 0).astype(float)
     
-    dist[dist > 0] = dist[dist > 0] - np.min(dist[dist>0])
-    dist /= np.max(dist)
+    # dist[dist > 0] = dist[dist > 0] - np.min(dist[dist>0])
+    # dist /= np.max(dist)
     return dist
 
 
@@ -171,9 +171,9 @@ def _sample_bipartite_graph(
             f'{graph_type} graph type: {missing_names}'
         )
     
-    batch_kwargs = _batch_kwargs(**kwargs)
+    # batch_kwargs = _batch_kwargs(**kwargs)
     
-    return SAMPLER_ROUTER[graph_type](m, n, rng, **batch_kwargs)
+    return SAMPLER_ROUTER[graph_type](m, n, rng, **kwargs)
 
 
 def _gmission_batch_kwargs(**kwargs) -> dict:
@@ -215,9 +215,10 @@ def _sample_bipartite_graphs(
     **kwargs
 ) -> List[_Array]:
     
+    batch_kwargs = _batch_kwargs(**kwargs)
 
     return [
-        _sample_bipartite_graph(m, n, rng, **kwargs)
+        _sample_bipartite_graph(m, n, rng, **batch_kwargs)
         for _ in range(num)
     ]
 
@@ -228,7 +229,7 @@ def _sample_probs(
     rng: Generator
 ) -> _Array:
     
-    return rng.uniform(0.5, 1, (m, num))
+    return rng.uniform(0, 1, (m, num))
 
 def _add_noise_to_vector(array, rng, noise_std, clip = True):
     # Adds random gaussian noise with std noise_std. If clamp is True

@@ -7,6 +7,8 @@ from util import powerset, diff, _neighbors
 from scipy.optimize import linear_sum_assignment
 from typing import Optional
 from gurobipy import GRB
+import time
+import multiprocessing as mp
 
 
 def cache_stochastic_opt(A: _Array, p: _Array) -> dict:
@@ -216,34 +218,35 @@ def _scale_mat_by_vec(A: _Array, b: _Array) -> _Array:
     '''
     return (A.T * b).T
 
-def _x_normalizing_constant(x: _Array, p: _Array) -> _Array:
-    used_probs =  1 - np.cumsum(
+def _compute_s(x: _Array):
+    return np.cumsum(
         np.vstack([np.zeros(shape=(1, x.shape[1])), x]),
         axis=0
     )[:-1]
 
-    return _scale_mat_by_vec(used_probs, p)
-
 
 def _validate_feasibility(x: _Array, p: _Array) -> _Array:
+    s = _compute_s(x)
     x = np.maximum(x, 0)
-    x = np.minimum(x, _x_normalizing_constant(x, p))
+    x = np.minimum(x, _scale_mat_by_vec(1 - s, p))
 
     eps = np.finfo(np.float32).eps
     assert np.all(x.sum(axis=0) - 1 <= eps)
     assert np.all(x.sum(axis=1) - p <= eps)
     assert np.all(x >= -eps)
-    assert np.all(x <= _x_normalizing_constant(x, p) + eps)
+    assert np.all(x <= _scale_mat_by_vec(1 - s, p) + eps)
 
     return x
 
-def lp_match(noisy_A, noisy_p, verbose: Optional[bool] = False) -> _Array:
+def lp_match(input, verbose: Optional[bool] = False) -> _Array:
+
+    noisy_A, noisy_p = input
     m, n = noisy_A.shape
     online_nodes = range(m)
     offline_nodes = range(n)
     indices = list(it.product(offline_nodes, online_nodes))
 
-    model = gp.Model('LP-MATCH')
+    model = gp.Model('LP-MATCH', env=gp.Env())
     x = _build_variables(model, indices)
     _build_constraints(model, x, noisy_p, online_nodes, offline_nodes, indices)
     _build_objective(model, x, noisy_A, indices)
@@ -253,16 +256,23 @@ def lp_match(noisy_A, noisy_p, verbose: Optional[bool] = False) -> _Array:
     model.optimize()
 
     output = np.array([x[(i, t)].x for (i, t) in indices]).reshape(n, m).T
-    return output, model.ObjVal
+    return output
+
+
+def call_model(inputs):
+    pool = mp.Pool(mp.cpu_count())
+    results = np.array(pool.map(lp_match, inputs))
+    return results
 
 
 def _compute_proposal_probs(x, p):
     eps = np.finfo(np.float32).eps
     
-    denom_matrix = _x_normalizing_constant(x, p)
-    proposal_probs = x / denom_matrix
+    s = _compute_s(x)
+    denom = _scale_mat_by_vec(1 - s, p)
+    proposal_probs = x / denom
     
-    proposal_probs = np.where(denom_matrix > eps, proposal_probs, 0)
+    proposal_probs = np.where(denom > eps, proposal_probs, 0)
     proposal_probs = np.where(proposal_probs <= 1, proposal_probs, 1)
     proposal_probs = np.round(proposal_probs, 5)
     proposal_probs = np.where(proposal_probs >= 0, proposal_probs, 0)
@@ -291,7 +301,6 @@ def _online_lp_rounding(x, A, p, noisy_A, noisy_p, coin_flips):
 
             if not np.all(valid_proposals == 0):
                 matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
-                matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
                 matching.append((t, matched_node))
                 val += A[t, matched_node]
                 offline_mask[matched_node] = 0
@@ -308,6 +317,84 @@ def _online_lp_rounding(x, A, p, noisy_A, noisy_p, coin_flips):
 
 
 def lp_approx(instance: _Instance, coin_flips: _Array, **kwargs):
-    _, _, noisy_A, noisy_p = instance
-    x, _ = lp_match(noisy_A, noisy_p, verbose=False)
-    return _online_lp_rounding(x, *instance, coin_flips)
+    # _, _, noisy_A, noisy_p = instance
+    # x, _ = lp_match(noisy_A, noisy_p, verbose=False)
+    return _online_lp_rounding(kwargs["x"], *instance, coin_flips)
+
+def _naor_scaling(x, s, eps, delta, theta):
+    a = np.maximum(theta, s)
+    b = np.maximum(theta, s + x)
+    return x * (1 - eps) + (b - a) * (eps + delta)
+
+def _first_fit(values, mask):
+    m, n = values.shape
+    bins = {t: [[]] for t in range(m)}
+    singleton_bins = {t: [] for t in range(m)}
+    current_bin_val = {t: 0 for t in range(m)}
+
+    for t in range(m):
+        for i in range(n):
+            value = values[t, i]
+            if mask[t, i]:
+                if value + current_bin_val[t] > 1:
+                    bins[t].append([(i, value)])
+                    current_bin_val[t] = value
+                else:
+                    bins[t][-1].append((i, value))
+                    current_bin_val[t] += value
+            else:
+                singleton_bins[t].append([(i, value)])
+
+    all_bins = {
+        t: [*singleton_bins[t], *bins[t]]
+        for t in bins.keys()
+    }
+    return all_bins
+
+
+def _get_candidates(m, n, bins, rng):
+    candidates = np.zeros(shape=(m, n))
+    for t in bins.keys():
+        u = rng.uniform(0, 1)
+        for bin in bins[t]:
+            cum_value = 0
+            for i, value in bin:
+                cum_value += value
+                if cum_value > u:
+                    candidates[t, i] = 1
+    return candidates.astype(bool)
+
+def naor_lp_approx(instance: _Instance, coin_flips: _Array, **kwargs):
+    eps = 0.0480
+    delta = 0.0643
+    theta = delta / (eps + delta)
+
+    A, _, noisy_A, noisy_p = instance
+
+    # x, _ = lp_match(noisy_A, noisy_p, verbose=False)
+    x = kwargs["x"]
+    m, n = x.shape
+
+    s = _compute_s(x)
+    x_hat = _naor_scaling(x, s, eps, delta, theta)
+    proposal_probs = _compute_proposal_probs(x_hat, noisy_p)
+    mask = (proposal_probs <= theta)
+    avail_mask = np.array(n * [True])
+    matching = []
+    val = 0
+    bins = _first_fit(proposal_probs, mask)
+    candidates = _get_candidates(m, n, bins, np.random.default_rng(seed=0))
+
+    for t in range(m):
+        if coin_flips[t]:
+            proposals = candidates[t, :]
+            valid_proposals = np.bitwise_and(avail_mask, proposals)
+
+            if not np.all(valid_proposals == 0):
+                matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
+                matching.append((t, matched_node))
+                val += A[t, matched_node]
+                avail_mask[matched_node] = 0
+
+
+    return matching, val
