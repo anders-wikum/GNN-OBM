@@ -136,12 +136,13 @@ def graph_config_to_string(config):
         return f"OSMNX_{config['location']}"
 
 label_map = {
-    # 'meta_gnn': 'MAGNOLIA (meta)',
-    'learned': 'MAGNOLIA',
+    'meta_gnn': 'MAGNOLIA (meta)',
+    # 'learned': 'MAGNOLIA',
     'greedy': 'greedy',
     'greedy_t': 'greedy-t',
     'lp_rounding': 'LP-rounding (Brav)',
-    'naor_lp_rounding': 'LP-rounding (Naor)'
+    'naor_lp_rounding': 'LP-rounding (Naor)',
+    'pollner_lp_rounding': 'LP-rounding (Pollner)'
     # 'meta_threshold': 'threshold (meta)'
     # 'GNN1': 'GNN1',
     # 'GNN2': 'GNN2',
@@ -153,7 +154,8 @@ color_map = {
     'greedy': '#009ade',
     'greedy_t': '#af58ba',
     'lp_rounding': '#00cd6c',
-    'naor_lp_rounding': '#F9812A'
+    'naor_lp_rounding': '#F9812A',
+    'pollner_lp_rounding': '#009ade',
     # 'meta_threshold': '#F9812A'
     # 'GNN1': '#009ade',
     # 'GNN2': '#af58ba',

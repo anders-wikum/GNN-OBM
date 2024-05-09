@@ -3,6 +3,7 @@ import itertools as it
 import multiprocessing as mp
 import numpy as np
 
+from copy import copy
 from numpy.random import Generator
 from scipy.optimize import linear_sum_assignment
 from typing import Optional, Tuple
@@ -317,6 +318,43 @@ def _get_candidates(m, n, bins, rng):
                     candidates[t, i] = 1
     return candidates.astype(bool)
 
+def _pollner_scaling(x, s, eps, delta):
+    theta = delta / (eps + delta)
+    a = np.minimum(np.maximum(theta - s, 0), x)
+    return (1 - eps) * a + (1 + delta) * (x - a)
+
+def pivot(r1: float, r2: float, p: float) -> Tuple[float, float]:
+    sum = r1 + r2
+    overflow = int(sum >= 1)
+    if r1 + r2 - 2 * overflow == 0:
+        return r1, r2
+    if p < (r2 - overflow) / (r1 + r2 - 2 * overflow):
+        return (overflow, sum - overflow)
+
+    return (sum - overflow, overflow)
+
+def pivotal_sampling(r: _Array, rng: Generator) -> _Array:
+
+    r = list(r)
+    r = copy(r)
+    p = rng.random(size=(len(r),))
+    int_correction = np.ceil(np.sum(r)) - np.sum(r)
+    r.append(int_correction)
+    
+    l_pointer = 0
+    r_pointer = 1
+
+    for i in range(len(r) - 1):
+        Rl, Rr = pivot(r[l_pointer], r[r_pointer], p[i])
+        r[l_pointer] = Rl
+        r[r_pointer] = Rr
+        if Rl in [0, 1]:
+            l_pointer = max(l_pointer, r_pointer) + 1
+        else:
+            r_pointer = max(l_pointer, r_pointer) + 1
+
+    return np.array(r[:-1]).round().astype(int)
+
 def _lp_approx(
     x: _Array,
     instance: _Instance,
@@ -340,6 +378,54 @@ def _lp_approx(
         if coin_flips[t]:
             proposals = candidates[t, :]
             valid_proposals = np.bitwise_and(avail_mask, proposals)
+
+            if not np.all(valid_proposals == 0):
+                matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
+                matching.append((t, matched_node))
+                val += A[t, matched_node]
+                avail_mask[matched_node] = 0
+    return matching, val
+
+
+def pollner_lp_approx(
+    x: _Array,
+    instance: _Instance,
+    coin_flips: _Array,
+    rng: Generator
+) -> Tuple[_Matching, float]:
+    
+    A, _, noisy_A, noisy_p = instance
+    m, n = x.shape
+
+    matching = []
+    val = 0
+    avail_mask = np.array(n * [True])
+    
+    def _proposal_prob_fn(x, p):
+        eps = 0.11
+        delta = 0.18
+
+        s = _compute_s(x)
+        x_hat = _pollner_scaling(x, s, eps, delta)
+        x_hat = x
+        return _compute_proposal_probs(x_hat, p)
+    
+    proposal_probs = _proposal_prob_fn(x, noisy_p)
+    for t in range(m):
+        
+        if coin_flips[t]:
+            index = np.argsort(noisy_A[t, :])[::-1]
+            reverse_index = np.nonzero(index == np.arange(n)[:, None])[1]
+
+            probs = proposal_probs[t, :]
+
+            probs[~avail_mask] = 0
+            probs = probs[index]
+            proposals = pivotal_sampling(probs, rng)
+            
+
+            ordered_proposals = proposals[reverse_index]
+            valid_proposals = np.bitwise_and(avail_mask, ordered_proposals)
 
             if not np.all(valid_proposals == 0):
                 matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
@@ -386,6 +472,7 @@ def naor_lp_approx(
 
         s = _compute_s(x)
         x_hat = _naor_scaling(x, s, eps, delta, theta)
+        x_hat = x
         return _compute_proposal_probs(x_hat, p)
     
     def _candidate_fn(proposal_probs, rng):

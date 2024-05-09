@@ -9,7 +9,7 @@ from torch_geometric.data import Batch
 from typing import Optional, List, Tuple
 
 from algorithms import greedy, threshold_greedy, braverman_lp_approx, \
-    naor_lp_approx, offline_opt, parallel_solve
+    naor_lp_approx, pollner_lp_approx, offline_opt, parallel_solve
 from torch_converter import init_pyg, update_pyg
 from params import _Instance
 from util import Dataset, diff, _flip_coins, _masked_argmax
@@ -19,7 +19,8 @@ BASELINES = {
     'greedy': greedy,
     'greedy_t': threshold_greedy,
     'lp_rounding': braverman_lp_approx,
-    'naor_lp_rounding': naor_lp_approx
+    'naor_lp_rounding': naor_lp_approx,
+    'pollner_lp_rounding': pollner_lp_approx
 }
 
 
@@ -93,7 +94,16 @@ class ParallelExecutionState:
     def _get_default_model_index(self):
         return np.zeros(
             self.num_instances * self.num_realizations
-        ).astype(int)    
+        ).astype(int)
+    
+
+    def _get_threshold_model_index(self):
+        online_offline_ratios = np.array([
+            realized_state.dataset.graph_features[1].item()
+            for execution_state in self.execution_states
+            for realized_state in execution_state.state_realizations
+        ])
+        return (online_offline_ratios > 1.5).astype(int)
 
 
     def _get_base_predictions(
@@ -137,9 +147,8 @@ class ParallelExecutionState:
                 if meta_model is not None:
                     model_pred = torch.argmax(meta_model(batch), dim=1).int()
                     model_preds.append(model_pred)
-                    index = torch.cat(model_preds)
 
-        return torch.cat(base_preds), index
+        return torch.cat(base_preds), torch.cat(model_preds)
 
     @staticmethod
     def _select_predictions_by_index(
@@ -254,21 +263,30 @@ class ParallelExecutionState:
         return times
 
 
-    def compute_competitive_ratios(self, baselines: List[str], **kwargs):
-
+    def compute_competitive_ratios(
+        self,
+        baselines: List[str],
+        baselines_only: bool,
+        **kwargs
+    ):
+    
         ratios = {
             "learned": np.zeros(
                 shape=(self.num_instances, self.num_realizations)
             )
         }
-        inputs = [
-            (instance[2], instance[3])
-            for instance in self.instances
-        ]
-        solve_start = time.perf_counter()
-        lp_outputs = parallel_solve(inputs)
-        solve_end = time.perf_counter()
-        solve_time = solve_end - solve_start
+        if len(baselines) > 0:
+            inputs = [
+                (instance[2], instance[3])
+                for instance in self.instances
+            ]
+            solve_start = time.perf_counter()
+            lp_outputs = parallel_solve(inputs)
+            solve_end = time.perf_counter()
+            solve_time = solve_end - solve_start
+        else:
+            solve_time = 0
+            lp_outputs = [None] * self.num_instances
 
         times = {"lp_solve": solve_time}
         for baseline in baselines: 
@@ -282,6 +300,7 @@ class ParallelExecutionState:
         for i, ex_state in enumerate(self.execution_states):
             kwargs["lp_rounding"]["x"] = lp_outputs[i]
             kwargs["naor_lp_rounding"]["x"] = lp_outputs[i]
+            kwargs["pollner_lp_rounding"]["x"] = lp_outputs[i]
             
             for j, real_state in enumerate(ex_state.state_realizations):
                 _, OPT = offline_opt(ex_state.A, real_state.coin_flips)
@@ -302,7 +321,9 @@ class ParallelExecutionState:
                 else:
                     for method in ratios.keys():
                         ratios[method][i, j] = np.nan
-                        
+
+        if baselines_only:         
+            del ratios["learned"]
         avg_ratios = {
             name: list(np.nanmean(ratio_matrix, axis=1))
             for (name, ratio_matrix) in ratios.items()
@@ -335,27 +356,31 @@ def evaluate_model(
 
     # ===================================================================== #
 
+    baselines_only = (len(base_models) == 0)
     assign_time = 0
     
     gnn_start = time.perf_counter()
-    for t in range(parallel_state.m):
 
-        model_assign_start = time.perf_counter()
-        choices = parallel_state.compute_choices(
-            meta_model,
-            base_models,
-            batch_size
-        )
-        model_assign_end = time.perf_counter()
-        assign_time += model_assign_end - model_assign_start
-        
-        times1 = parallel_state.update(t, choices)
-        for key, _ in times1.items():
-            total_times[key] += times1[key]
+    if not baselines_only:
+        for t in range(parallel_state.m):
+
+            model_assign_start = time.perf_counter()
+            choices = parallel_state.compute_choices(
+                meta_model,
+                base_models,
+                batch_size
+            )
+            model_assign_end = time.perf_counter()
+            assign_time += model_assign_end - model_assign_start
+            
+            times1 = parallel_state.update(t, choices)
+            for key, _ in times1.items():
+                total_times[key] += times1[key]
     gnn_end = time.perf_counter()
 
     ratio_dict, times = parallel_state.compute_competitive_ratios(
         baselines,
+        baselines_only,
         **kwargs
     )
 
