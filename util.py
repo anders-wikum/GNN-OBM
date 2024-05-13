@@ -1,19 +1,21 @@
-from itertools import chain, combinations
+import ast
+import math
+import matplotlib
+import pickle
+import torch
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from params import _Array
-from torch_geometric.data import InMemoryDataset
-from numpy.random import Generator
-from copy import copy
-import torch
-import math
-import matplotlib.pyplot as plt
 import scipy.stats as st 
-import pickle
-import ast
 
+from itertools import chain, combinations
 from matplotlib.ticker import MultipleLocator, AutoMinorLocator, FuncFormatter
-import matplotlib
+from numpy.random import Generator
+from torch_geometric.data import InMemoryDataset
+
+from params import _Array
+
+
 matplotlib.rcParams['mathtext.fontset'] = 'stix'
 matplotlib.rcParams['font.family'] = 'STIXGeneral'
 plt.rcParams['text.usetex'] = False
@@ -50,22 +52,6 @@ def _vtg_greedy_choices(pred: torch.Tensor, batch: Dataset) -> torch.Tensor:
     
     return torch.where(choices < batch.n, choices, -1)
 
-def _vtg_predictions(pred: torch.Tensor, batch: Dataset) -> torch.Tensor:
-    # Returns the model's predictions, masked to only keep the neighbor predictions
-    try:
-        batch_size = batch.ptr.size(dim=0) - 1
-    except:
-        batch_size = 1
-
-    return torch.mul(
-        pred.view(batch_size, -1),
-        batch.neighbors.view(batch_size, -1)
-    )
-
-
-def fill_list(value: object, size: int):
-    return [copy(value) for _ in range(size)]
-
 
 def powerset(iterable):
     "powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
@@ -90,15 +76,6 @@ def _random_subset(seq, m, rng: Generator):
         targets.add(x)
 
     return targets
-
-
-def _symmetrize(adj):
-    n, m = adj.shape
-    A = np.zeros((n + m, n + m))
-    A[:n, n:] = adj
-    A[n:, :n] = adj.T
-    return A
-
 
 def _neighbors(A: _Array, S: set, t: int) -> _Array:
     return [u for u in S if A[t, u] > 0]
@@ -142,7 +119,7 @@ def _extract_batch(batch):
 
 
 def _flip_coins(p: _Array, rng: Generator) -> _Array:
-    return np.vectorize(lambda x: rng.binomial(1, x))(p)
+    return rng.binomial(1, p)
 
 
 def graph_config_to_string(config):
@@ -159,24 +136,26 @@ def graph_config_to_string(config):
         return f"OSMNX_{config['location']}"
 
 label_map = {
-    # 'meta_gnn': 'MAGNOLIA (meta)',
-    'learned': 'MAGNOLIA',
+    'meta_gnn': 'MAGNOLIA (meta)',
+    # 'learned': 'MAGNOLIA',
     'greedy': 'greedy',
     'greedy_t': 'greedy-t',
     'lp_rounding': 'LP-rounding (Brav)',
-    'naor_lp_rounding': 'LP-rounding (Naor)'
+    'naor_lp_rounding': 'LP-rounding (Naor)',
+    'pollner_lp_rounding': 'LP-rounding (Pollner)'
     # 'meta_threshold': 'threshold (meta)'
     # 'GNN1': 'GNN1',
     # 'GNN2': 'GNN2',
 }
 
 color_map = {
-    # 'meta_gnn': '#ff1f5b',
-    'learned': '#ff1f5b',
+    'meta_gnn': '#ff1f5b',
+    #'learned': '#ff1f5b',
     'greedy': '#009ade',
     'greedy_t': '#af58ba',
     'lp_rounding': '#00cd6c',
-    'naor_lp_rounding': '#F9812A'
+    'naor_lp_rounding': '#F9812A',
+    'pollner_lp_rounding': '#009ade',
     # 'meta_threshold': '#F9812A'
     # 'GNN1': '#009ade',
     # 'GNN2': '#af58ba',
@@ -236,7 +215,7 @@ def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph
                 aggregated_ratios[model] = current_ratios
 
         for model, model_ratios in aggregated_ratios.items():
-            if model in ['learned', 'greedy', 'greedy_t', 'lp_rounding', 'naor_lp_rounding']:
+            if model in ['learned', 'greedy', 'greedy_t', 'lp_rounding']:
                 competitive_ratios = [val[0] for val in model_ratios]
                 ci_lbs = [val[1] for val in model_ratios]
                 ci_ubs = [val[2] for val in model_ratios]
@@ -273,10 +252,7 @@ def _plot_approx_ratios_all(ratios, data, naming_function = lambda graph_type: g
     k = 4
     fontsize = 20
     fontsize2 = 20
-    # fontsize = 15
-    # fontsize2 = 20
     num_subplots = len(data.keys())
-    # fig, ax = plt.subplots(k, num_subplots//k, sharex=True, sharey=True, figsize=(24,32))
     fig, ax = plt.subplots(k, num_subplots//k, sharex=True, sharey=True, figsize=(12,16))
     fig.add_subplot(111, frameon=False)
 
@@ -385,13 +361,7 @@ def _box_plots(data, naming_function = lambda graph_type: graph_type):
 
     i = 0
     for graph_type, comp_ratios in data.items():
-        all_data = []
-        labels = []
-        for model in model_order:
-            if model in comp_ratios:
-                all_data.append(comp_ratios[model])
-                labels.append(label_map[model])
-        all_data = np.stack(all_data).T
+        all_data = np.stack([comp_ratios[model] for model in model_order]).T
 
         # source: https://matplotlib.org/stable/gallery/statistics/boxplot_color.html#sphx-glr-gallery-statistics-boxplot-color-py
         # rectangular box plot
@@ -414,13 +384,12 @@ def _box_plots(data, naming_function = lambda graph_type: graph_type):
         ax[i].tick_params(labelcolor='none', axis = 'x', which='both', top=False, bottom=False, left=False, right=False, labelsize=13)
         ax[i].tick_params(axis='both', which='major', labelsize=13)
         ax[i].tick_params(axis='both', which='minor', labelsize=13)
-        ax[i].set_ylim([0.6, 1.02]) #TODO possibly remove
         if i != 0:
             ax[i].tick_params(labelcolor='none', axis = 'y', which='both', top=False, bottom=False, left=False, right=False, labelsize=13)
         i += 1
     fig.legend(
         [bplot["boxes"][j] for j in range(len(bplot["boxes"]))], 
-        labels,
+        label_map.values(),
         bbox_to_anchor=(1.10, 0.25),
         loc='lower right',
         fontsize=15
