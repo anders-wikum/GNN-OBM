@@ -92,9 +92,7 @@ class ParallelExecutionState:
 
 
     def _get_default_model_index(self):
-        return np.zeros(
-            self.num_instances * self.num_realizations
-        ).astype(int)
+        return [torch.tensor([0]) for _ in range(self.num_instances * self.num_realizations)]
     
 
     def _get_threshold_model_index(self):
@@ -129,13 +127,14 @@ class ParallelExecutionState:
         meta_model: torch.nn.Module,
         base_models: List[torch.nn.Module]
     ):
-        if meta_model is None:
-            index = self._get_default_model_index()
+        if meta_model is None: #TODO unsure of this
+            model_preds = self._get_default_model_index()
 
         device = next(base_models[0].parameters()).device
         with torch.no_grad():
             base_preds = []
-            model_preds = []
+            if meta_model is not None:
+                model_preds = []
 
             for batch in data_loader:
                 batch.to(device)
@@ -147,7 +146,6 @@ class ParallelExecutionState:
                 if meta_model is not None:
                     model_pred = torch.argmax(meta_model(batch), dim=1).int()
                     model_preds.append(model_pred)
-
         return torch.cat(base_preds), torch.cat(model_preds)
 
     @staticmethod
@@ -298,9 +296,9 @@ class ParallelExecutionState:
             )
         
         for i, ex_state in enumerate(self.execution_states):
-            kwargs["lp_rounding"]["x"] = lp_outputs[i]
-            kwargs["naor_lp_rounding"]["x"] = lp_outputs[i]
-            kwargs["pollner_lp_rounding"]["x"] = lp_outputs[i]
+            kwargs.get("lp_rounding", {})["x"] = lp_outputs[i]
+            kwargs.get("naor_lp_rounding", {})["x"] = lp_outputs[i]
+            kwargs.get("pollner_lp_rounding", {})["x"] = lp_outputs[i]
             
             for j, real_state in enumerate(ex_state.state_realizations):
                 _, OPT = offline_opt(ex_state.A, real_state.coin_flips)
@@ -386,14 +384,14 @@ def evaluate_model(
 
    
 
-    print(f"Generation time: {gen_end - gen_start}")
-    print(f"GNN time: {gnn_end - gnn_start}")
-    print(f"        Model assignment time: {assign_time}")
-    print(f"        State update time: {dict(total_times)}")
-    print(f"Baseline times: {times}")
+    # print(f"Generation time: {gen_end - gen_start}")
+    # print(f"GNN time: {gnn_end - gnn_start}")
+    # print(f"        Model assignment time: {assign_time}")
+    # print(f"        State update time: {dict(total_times)}")
+    # print(f"Baseline times: {times}")
 
     end = time.perf_counter()
-    print(f"Total time: {end - start}")
+    # print(f"Total time: {end - start}")
 
     return ratio_dict, {}
 

@@ -54,12 +54,12 @@ BASE_MODEL_TRAIN_CONFIG = {
 			'weighted': True
 		}
 	],
-	'regimes': [(30,10)]
+	'regimes': [(10,6)]
 }
 
 META_TRAIN_CONFIG = {
-    'train_num': 150,
-    'val_num': 50,
+    'train_num': 6,
+    'val_num': 6,
     'configs': [
         {
             'graph_type': 'ER',
@@ -203,7 +203,7 @@ MAIN_TESTING_GRAPH_CONFIGS = [
 EXPERIMENT_META_REGIMES = [(x, 16) for x in np.arange(8, 65, 4)]
 EXPERIMENT_BASE_TESTING_REGIMES = [(30,10)]
 EXPERIMENT_NOISE_ROBUSTNESS_REGIMES = [(30,10)]
-EXPERIMENT_SIZE_GENERALIZATION_REGIMES = [(2*x, x) for x in np.arange(10, 40, 2)]
+EXPERIMENT_SIZE_GENERALIZATION_REGIMES = [(2*x, x) for x in np.arange(10, 200, 2)]
 
 
 # ============== END ====================================== #

@@ -52,6 +52,17 @@ def _vtg_greedy_choices(pred: torch.Tensor, batch: Dataset) -> torch.Tensor:
     
     return torch.where(choices < batch.n, choices, -1)
 
+def _vtg_predictions(pred: torch.Tensor, batch: Dataset) -> torch.Tensor:
+    # Returns the model's predictions, masked to only keep the neighbor predictions
+    try:
+        batch_size = batch.ptr.size(dim=0) - 1
+    except:
+        batch_size = 1
+
+    return torch.mul(
+        pred.view(batch_size, -1),
+        batch.neighbors.view(batch_size, -1)
+    )
 
 def powerset(iterable):
     "powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
@@ -136,8 +147,8 @@ def graph_config_to_string(config):
         return f"OSMNX_{config['location']}"
 
 label_map = {
-    'meta_gnn': 'MAGNOLIA (meta)',
-    # 'learned': 'MAGNOLIA',
+    # 'meta_gnn': 'MAGNOLIA (meta)',
+    'learned': 'MAGNOLIA',
     'greedy': 'greedy',
     'greedy_t': 'greedy-t',
     'lp_rounding': 'LP-rounding (Brav)',
@@ -149,8 +160,8 @@ label_map = {
 }
 
 color_map = {
-    'meta_gnn': '#ff1f5b',
-    #'learned': '#ff1f5b',
+    # 'meta_gnn': '#ff1f5b',
+    'learned': '#ff1f5b',
     'greedy': '#009ade',
     'greedy_t': '#af58ba',
     'lp_rounding': '#00cd6c',
