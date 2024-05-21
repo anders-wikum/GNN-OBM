@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-
 from copy import deepcopy
 from numpy.random import Generator
 from torch_geometric.data import Data
@@ -261,6 +260,23 @@ TARGET_FUNCS = {
     'meta': _meta_ratios
 }
 
+
+def _get_base_predictions(
+    batch: Data,
+    base_models: List[torch.nn.Module]
+):
+    device = next(base_models[0].parameters()).device
+    batch.to(device)
+    with torch.no_grad():
+        base_pred = torch.concat(
+            [
+                base_model(batch)
+                for base_model in base_models
+            ],
+            dim=1
+        )
+        return base_pred
+
 def _instance_to_sample_path(
     instance: _Instance,
     target_fn: callable,
@@ -276,6 +292,7 @@ def _instance_to_sample_path(
     # pyg graph for the meta model, the latter includes base model predictions as
     # a node feature
     pyg_graph = init_pyg(instance, rng)
+    pyg_graph.base_model_preds = _get_base_predictions(pyg_graph, base_models)
 
     sample_path = []
     offline_nodes = frozenset(np.arange(n))
@@ -311,6 +328,7 @@ def _instance_to_sample_path(
                     t + 1,
                     offline_nodes
                 )
+                pyg_graph.base_model_preds = _get_base_predictions(pyg_graph, base_models)
 
     return sample_path
 
