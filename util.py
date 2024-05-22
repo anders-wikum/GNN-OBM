@@ -148,12 +148,17 @@ def graph_config_to_string(config):
 
 label_map = {
     # 'meta_gnn': 'MAGNOLIA (meta)',
-    'learned': 'MAGNOLIA',
-    'greedy': 'greedy',
-    'greedy_t': 'greedy-t',
-    'lp_rounding': 'LP-rounding (Brav)',
-    'naor_lp_rounding': 'LP-rounding (Naor)',
-    'pollner_lp_rounding': 'LP-rounding (Pollner)'
+    # 'learned': 'MAGNOLIA',
+    # 'greedy': 'greedy',
+    # 'greedy_t': 'greedy-t',
+    # 'lp_rounding': 'LP-rounding (Brav)',
+    # 'naor_lp_rounding': 'LP-rounding (Naor)',
+    # 'pollner_lp_rounding': 'LP-rounding (Pollner)',
+    'GENConv': 'GENConv',
+    'DeeperGCN': 'DeeperGCN',
+    'GATv2Conv': 'GATv2Conv',
+    'GraphConv': 'GraphConv',
+    'GCNConv': 'GCNConv',
     # 'meta_threshold': 'threshold (meta)'
     # 'GNN1': 'GNN1',
     # 'GNN2': 'GNN2',
@@ -167,6 +172,11 @@ color_map = {
     'lp_rounding': '#00cd6c',
     'naor_lp_rounding': '#F9812A',
     'pollner_lp_rounding': '#009ade',
+    'GENConv': 'ff1f5b',
+    'DeeperGCN': 'ff1f5b',
+    'GATv2Conv': 'ff1f5b',
+    'GraphConv': 'ff1f5b',
+    'GCNConv': 'ff1f5b',
     # 'meta_threshold': '#F9812A'
     # 'GNN1': '#009ade',
     # 'GNN2': '#af58ba',
