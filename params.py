@@ -34,8 +34,8 @@ import numpy as np
 ######## Training ########
 
 BASE_MODEL_TRAIN_CONFIG = {
-	'train_num': 200,
-	'val_num': 100,
+	'train_num': 2000,
+	'val_num': 300,
 	'configs': [
 		{
 			'graph_type': 'ER',
@@ -58,8 +58,8 @@ BASE_MODEL_TRAIN_CONFIG = {
 }
 
 META_TRAIN_CONFIG = {
-    'train_num': 6,
-    'val_num': 6,
+    'train_num': 2000,
+    'val_num': 300,
     'configs': [
         {
             'graph_type': 'ER',
@@ -102,7 +102,7 @@ NOISE_ROBUST_MODEL_TRAIN_CONFIG = {
 			'weighted': True
 		}
 	],
-	'regimes': [(30,10)]
+	'regimes': [(10,6)]
 }
 
 THRESHOLD_GREEDY_NODE_REGIMES = [(30,10)]
@@ -183,7 +183,8 @@ MAIN_TESTING_GRAPH_CONFIGS = [
     {
         'graph_type': 'ER',
         'p': 0.5,
-        'weighted': True
+        'weighted': True,
+        'weight_scaling': 1
     },
     {
         'graph_type': 'GEOM',
@@ -200,10 +201,23 @@ MAIN_TESTING_GRAPH_CONFIGS = [
     }
 ]
 
-EXPERIMENT_META_REGIMES = [(x, 16) for x in np.arange(8, 65, 4)]
+SMALL_TESTING_GRAPH_CONFIGS = [
+    {
+        'graph_type': 'ER',
+        'p': 0.5,
+        'weighted': True,
+        'weight_scaling': 1
+    },
+    {
+        'graph_type': 'OSMNX',
+        'location': 'Fremont, California, USA'
+    },
+]
+
+EXPERIMENT_META_REGIMES = [(x, 16) for x in np.arange(8, 45, 3)]
 EXPERIMENT_BASE_TESTING_REGIMES = [(30,10)]
 EXPERIMENT_NOISE_ROBUSTNESS_REGIMES = [(30,10)]
-EXPERIMENT_SIZE_GENERALIZATION_REGIMES = [(2*x, x) for x in np.arange(10, 200, 2)]
+EXPERIMENT_SIZE_GENERALIZATION_REGIMES = [(2*x, x) for x in np.arange(10, 95, 2)]
 
 
 # ============== END ====================================== #

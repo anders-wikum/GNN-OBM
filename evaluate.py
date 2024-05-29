@@ -194,6 +194,7 @@ class ParallelExecutionState:
             meta_model=meta_model,
             base_models=base_models
         )
+        index = index.long()
         
         preds = self._select_predictions_by_index(
             base_preds,
