@@ -131,6 +131,8 @@ class ParallelExecutionState:
     ):
         if meta_model is None:
             index = self._get_default_model_index()
+        elif meta_model == 'threshold':
+            index = self._get_threshold_model_index()
 
         device = next(base_models[0].parameters()).device
         with torch.no_grad():
@@ -144,11 +146,14 @@ class ParallelExecutionState:
                 base_preds.append(base_pred)
                 batch.base_model_preds = base_pred
 
-                if meta_model is not None:
+                if meta_model is not None and meta_model != 'threshold':
                     model_pred = torch.argmax(meta_model(batch), dim=1).int()
                     model_preds.append(model_pred)
+            
+            if meta_model is not None and meta_model != 'threshold':
+                index = torch.cat(model_preds)
 
-        return torch.cat(base_preds), torch.cat(model_preds)
+        return torch.cat(base_preds), index
 
     @staticmethod
     def _select_predictions_by_index(
@@ -281,12 +286,12 @@ class ParallelExecutionState:
                 for instance in self.instances
             ]
             solve_start = time.perf_counter()
-            lp_outputs = parallel_solve(inputs)
+            #lp_outputs = parallel_solve(inputs)
             solve_end = time.perf_counter()
             solve_time = solve_end - solve_start
         else:
             solve_time = 0
-            lp_outputs = [None] * self.num_instances
+            #lp_outputs = [None] * self.num_instances
 
         times = {"lp_solve": solve_time}
         for baseline in baselines: 
@@ -298,9 +303,9 @@ class ParallelExecutionState:
             )
         
         for i, ex_state in enumerate(self.execution_states):
-            kwargs["lp_rounding"]["x"] = lp_outputs[i]
-            kwargs["naor_lp_rounding"]["x"] = lp_outputs[i]
-            kwargs["pollner_lp_rounding"]["x"] = lp_outputs[i]
+            # kwargs["lp_rounding"]["x"] = lp_outputs[i]
+            # kwargs["naor_lp_rounding"]["x"] = lp_outputs[i]
+            # kwargs["pollner_lp_rounding"]["x"] = lp_outputs[i]
             
             for j, real_state in enumerate(ex_state.state_realizations):
                 _, OPT = offline_opt(ex_state.A, real_state.coin_flips)
