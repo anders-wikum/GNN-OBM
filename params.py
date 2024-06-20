@@ -1,10 +1,12 @@
 import numpy as np
-from typing import Tuple
+from typing import Tuple, List
 
-_Array = np.ndarray
+
 
 # An instance is: A, p, noisy A, noisy p
+_Array = np.ndarray
 _Instance = Tuple[_Array, _Array, _Array, _Array]
+_Matching = List[Tuple[int, int]]
 
 # ============== Graph sampler params ===================== #
 
@@ -112,32 +114,38 @@ ALL_TESTING_GRAPH_CONFIGS = [
     {
         'graph_type': 'ER',
         'p': 0.25,
-        'weighted': True
+        'weighted': True,
+        'weight_scaling': 1
     },
     {
         'graph_type': 'ER',
         'p': 0.5,
-        'weighted': True
+        'weighted': True,
+        'weight_scaling': 1
     },
     {
         'graph_type': 'ER',
         'p': 0.75,
-        'weighted': True
+        'weighted': True,
+        'weight_scaling': 1
     },
     {
         'graph_type': 'BA',
         'ba_param': 4,
-        'weighted': True
+        'weighted': True,
+        'weight_scaling': 1
     },
     {
         'graph_type': 'BA',
         'ba_param': 6,
-        'weighted': True
+        'weighted': True,
+        'weight_scaling': 1
     },
     {
         'graph_type': 'BA',
         'ba_param': 8,
-        'weighted': True
+        'weighted': True,
+        'weight_scaling': 1
     },
     {
         'graph_type': 'GEOM',

@@ -1,23 +1,29 @@
-from params import SAMPLER_SPECS, GRAPH_TYPES, _Array, _Instance
-from util import _random_subset, _load_gmission, _load_osmnx
 import numpy as np
+
 from numpy.random import Generator
 from typing import List, Tuple
 
+from params import SAMPLER_SPECS, GRAPH_TYPES, _Array, _Instance
+from util import _random_subset, _load_gmission, _load_osmnx
 
 
 def _add_uniform_weights(
     adj: _Array,
     low: float,
     high: float,
+    weight_scaling: float,
     rng: Generator
 ) -> _Array:
     
-    n, m = adj.shape
+    m, n = adj.shape
     weights = rng.uniform(
-        low=low, high=high, size=(n, m)
+        low=low, high=high, size=(m, n)
     )
-    return np.multiply(adj.astype(float), weights)
+
+    scale = weight_scaling ** (np.arange(m).reshape(-1, 1).repeat(n, axis=1))
+    scaled_weights = np.multiply(weights, scale)
+
+    return np.multiply(adj.astype(float), scaled_weights)
 
 
 def _sample_er_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
@@ -25,11 +31,12 @@ def _sample_er_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
     weighted = kwargs.get('weighted', False)
     low = kwargs.get('low', 0.0),
     high = kwargs.get('high', 1.0)
+    weight_scaling = kwargs.get('weight_scaling', 1.0)
     p = kwargs.get('p', 0.5)
 
     mat = rng.binomial(1, p, size=(m, n))
     if weighted:
-        mat = _add_uniform_weights(mat, low, high, rng)
+        mat = _add_uniform_weights(mat, low, high, weight_scaling, rng)
     return mat
 
 
@@ -54,13 +61,14 @@ def _barabasi_albert_graph(
 def _sample_ba_bipartite_graph(m: int, n: int, rng:Generator, **kwargs):
     low = kwargs.get('low', 0.0),
     high = kwargs.get('high', 1.0)
+    weight_scaling = kwargs.get('weight_scaling', 1.0)
     weighted = kwargs['weighted']
     ba_param = kwargs['ba_param']
 
     A = _barabasi_albert_graph(m, n, ba_param, rng)
 
     if weighted:
-        A = _add_uniform_weights(A, low, high, rng)
+        A = _add_uniform_weights(A, low, high, weight_scaling, rng)
 
     return A
 
@@ -253,7 +261,7 @@ def sample_instances(
     As = _sample_bipartite_graphs(m, n, num, rng, **kwargs)
 
     def _add_noise_if_nonzero(A, rng, noise_std):
-        noisy_A = _add_noise_to_vector(A, rng, noise_std)
+        noisy_A = _add_noise_to_vector(A, rng, noise_std, clip=False)
         noisy_A[A == 0] = 0
         return noisy_A
 
