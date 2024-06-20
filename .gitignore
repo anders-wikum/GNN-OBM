@@ -3,6 +3,6 @@
 **/cache/
 **/gnn_library/__pycache__/
 **/*.pyc
-**/experiments/
+**/experiment_output/
 !data/g_mission
 #**/trained_models/
