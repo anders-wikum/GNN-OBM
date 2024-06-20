@@ -147,51 +147,47 @@ def graph_config_to_string(config):
         return f"OSMNX_{config['location']}"
 
 label_map = {
-    # 'meta_gnn': 'MAGNOLIA',
-    # 'learned': 'MAGNOLIA',
-    # 'greedy': 'greedy',
-    # 'greedy_t': 'greedy-t',
-    # 'lp_rounding': 'LP-rounding',
-    # Diff training
+    'meta_gnn': 'MAGNOLIA',
+    'learned': 'MAGNOLIA',
+    'greedy': 'greedy',
+    'greedy_t': 'greedy-t',
+    'lp_rounding': 'LP-rounding',
     '(5,3)': '(3$\\times$5)',
     '(10,6)': '(6$\\times$10)',
     '(15,9)': '(9$\\times$15)',
     '(20,12)': '(12$\\times$20)',
-    # 'naor_lp_rounding': 'LP-rounding (Naor)',
-    # 'pollner_lp_rounding': 'LP-rounding (Pollner)',
-    ### Other GNNs
-    # 'GENConv': 'GENConv',
-    # 'DeeperGCN': 'DeeperGCN',
-    # 'GATv2Conv': 'GATv2Conv',
-    # 'GraphConv': 'GraphConv',
-    # 'GCNConv': 'GCNConv',
-    # 'meta_threshold': 'threshold (meta)'
-    # 'GNN1': 'GNN1',
-    # 'GNN2': 'GNN2',
+    'naor_lp_rounding': 'LP-rounding (Naor)',
+    'pollner_lp_rounding': 'LP-rounding (Pollner)',
+    'GENConv': 'GENConv',
+    'DeeperGCN': 'DeeperGCN',
+    'GATv2Conv': 'GATv2Conv',
+    'GraphConv': 'GraphConv',
+    'GCNConv': 'GCNConv',
+    'meta_threshold': 'threshold (meta)',
+    'GNN1': 'GNN1',
+    'GNN2': 'GNN2',
 }
 
 color_map = {
-    # 'meta_gnn': '#ff1f5b',
-    # 'learned': '#ff1f5b',
-    # 'greedy': '#009ade',
-    # 'greedy_t': '#af58ba',
-    # 'lp_rounding': '#00cd6c',
-    # 'naor_lp_rounding': '#F9812A',
-    # 'pollner_lp_rounding': '#009ade',
-    ### Diff training
+    'meta_gnn': '#ff1f5b',
+    'learned': '#ff1f5b',
+    'greedy': '#009ade',
+    'greedy_t': '#af58ba',
+    'lp_rounding': '#00cd6c',
+    'naor_lp_rounding': '#F9812A',
+    'pollner_lp_rounding': '#009ade',
     '(5,3)': '#00cd6c',
     '(10,6)': '#ff1f5b',
     '(15,9)': '#af58ba',
     '(20,12)': '#009ade',
-    ### Other GNNs
-    # 'GENConv': '#ff1f5b',
-    # 'DeeperGCN': '#009ade',
-    # 'GATv2Conv': '#af58ba',
-    # 'GraphConv': '#00cd6c',
-    # 'GCNConv': '#ff1f5b',
-    # 'meta_threshold': '#F9812A'
-    # 'GNN1': '#009ade',
-    # 'GNN2': '#af58ba',
+    'GENConv': '#ff1f5b',
+    'DeeperGCN': '#009ade',
+    'GATv2Conv': '#af58ba',
+    'GraphConv': '#00cd6c',
+    'GCNConv': '#ff1f5b',
+    'meta_threshold': '#F9812A',
+    'GNN1': '#009ade',
+    'GNN2': '#af58ba',
 }
 
 def title_of_graph_type2(graph_type):
@@ -278,7 +274,7 @@ def _plot_approx_ratios(ratios, data, naming_function = lambda graph_type: graph
     plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
     plt.xlabel(x_axis_name, fontsize = fontsize2 - 2, labelpad=15)
     plt.ylabel('Average competitive ratio', fontsize = fontsize2 - 2, labelpad=20)
-    plt.savefig(f"data/diff_gnn_main.pdf", dpi=300, bbox_inches = "tight")
+    plt.savefig(f"plots/diff_gnn_main.pdf", dpi=300, bbox_inches = "tight")
     plt.show()
  
 def _plot_approx_ratios_all(ratios, data, naming_function = lambda graph_type: graph_type, x_axis_name = "# online / # offline", confidence = 0.95):
@@ -345,7 +341,7 @@ def _plot_approx_ratios_all(ratios, data, naming_function = lambda graph_type: g
     plt.ylabel('Average competitive ratio', fontsize = fontsize2, labelpad=15)
     space = 0.15
     plt.subplots_adjust(wspace=space, hspace=space)
-    plt.savefig(f"data/diff_training_size_generalization_all.pdf", dpi=300, bbox_inches = "tight")
+    plt.savefig(f"plots/diff_training_size_generalization_all.pdf", dpi=300, bbox_inches = "tight")
     plt.show()
 
 def _plot_approx_ratios_single(ratios, data, naming_function = lambda graph_type: graph_type, x_axis_name = "# online / # offline", confidence = 0.95):
@@ -386,18 +382,24 @@ def _plot_approx_ratios_single(ratios, data, naming_function = lambda graph_type
     plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
     plt.xlabel(x_axis_name, fontsize = 15, labelpad=15)
     plt.ylabel('Average competitive ratio', fontsize = 15, labelpad=15)
-    plt.savefig(f"data/noise_robustness_all.pdf", dpi=300, bbox_inches = "tight")
+    plt.savefig(f"plots/noise_robustness_all.pdf", dpi=300, bbox_inches = "tight")
     plt.show()
+
+def _extract_models(data):
+    for comp_ratios in data.values():
+        return [model for model in model_order if model in comp_ratios] 
+
 
 def _box_plots(data, naming_function = lambda graph_type: graph_type):
     num_subplots = len(data.keys())
-    # fig, ax = plt.subplots(1, num_subplots, sharex=True, sharey=True, figsize=(12,3))
-    fig, ax = plt.subplots(1, num_subplots, sharex=True, sharey=True, figsize=(6,3))
+    fig, ax = plt.subplots(1, num_subplots, sharex=True, sharey=True, figsize=(12,3))
+    #fig, ax = plt.subplots(1, num_subplots, sharex=True, sharey=True, figsize=(6,3))
     fig.add_subplot(111, frameon=False)
 
+    models = _extract_models(data)
     i = 0
     for graph_type, comp_ratios in data.items():
-        all_data = np.stack([comp_ratios[model] for model in model_order]).T
+        all_data = np.stack([comp_ratios[model] for model in models]).T
 
         # source: https://matplotlib.org/stable/gallery/statistics/boxplot_color.html#sphx-glr-gallery-statistics-boxplot-color-py
         # rectangular box plot
@@ -411,7 +413,8 @@ def _box_plots(data, naming_function = lambda graph_type: graph_type):
             median.set_color('black')
 
         # fill with colors
-        for patch, color in zip(bplot['boxes'], color_map.values()):
+        colors = [color_map[model] for model in models]
+        for patch, color in zip(bplot['boxes'], colors):
             patch.set_facecolor(color)
 
         # adding horizontal grid lines
@@ -427,7 +430,7 @@ def _box_plots(data, naming_function = lambda graph_type: graph_type):
         i += 1
     fig.legend(
         [bplot["boxes"][j] for j in range(len(bplot["boxes"]))], 
-        label_map.values(),
+        [label_map[model] for model in models],
         # bbox_to_anchor=(1.10, 0.25),
         bbox_to_anchor=(1.27, 0.25),
         loc='lower right',
@@ -454,11 +457,11 @@ def graph_config_to_string(config):
         return f"OSMNX_{config['location']}"
 
 def save_meta_experiment(graph_str, data):
-    with open(f"experiments/meta_{graph_str}.pickle", 'wb') as handle:
+    with open(f"experiment_output/meta_{graph_str}.pickle", 'wb') as handle:
             pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 def upload_meta_experiment(graph_str, data):
-    filepath = f"experiments/meta_{graph_str}.pickle"
+    filepath = f"experiment_output/meta_{graph_str}.pickle"
     try:
         with open(filepath, 'rb') as handle:
             current_data = pickle.load(handle)
@@ -482,7 +485,7 @@ def load_meta_experiments(configs):
     data = {}
     for config in configs:
         config_str = graph_config_to_string(config)
-        with open(f"experiments/meta_{config_str}.pickle", 'rb') as handle:
+        with open(f"experiment_output/meta_{config_str}.pickle", 'rb') as handle:
             data[config_str] = pickle.load(handle)
     return data
 
@@ -545,7 +548,7 @@ def _plot_meta_ratios_main(
     plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
     plt.xlabel(x_axis_name, fontsize = 20, labelpad=15)
     plt.ylabel('Average competitive ratio', fontsize = 20, labelpad=15)
-    plt.savefig(f"data/small_meta.pdf", dpi=300, bbox_inches = "tight")
+    plt.savefig(f"plots/small_meta.pdf", dpi=300, bbox_inches = "tight")
     plt.show()
 
 
@@ -605,7 +608,7 @@ def _plot_meta_ratios(
     plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
     plt.xlabel(x_axis_name, fontsize = 20, labelpad=15)
     plt.ylabel('Average competitive ratio', fontsize = 20, labelpad=15)
-    plt.savefig(f"data/meta_complete_plots.pdf", dpi=300, bbox_inches = "tight")
+    plt.savefig(f"plots/meta_complete_plots.pdf", dpi=300, bbox_inches = "tight")
     plt.show()
 
 

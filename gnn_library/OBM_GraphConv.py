@@ -108,12 +108,3 @@ class OBM_GraphConv(torch.nn.Module):
                 pred = self(batch)
                 choices.append(_vtg_greedy_choices(pred, batch))
             return torch.cat(choices)
-
-    def batch_return_predictions(self, batches):
-        with torch.no_grad():
-            predictions = []
-            for batch in batches:
-                batch.to(self.device)
-                pred = self(batch)
-                predictions.append(_vtg_predictions(pred, batch))
-            return torch.cat(predictions)

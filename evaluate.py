@@ -127,14 +127,15 @@ class ParallelExecutionState:
         meta_model: torch.nn.Module,
         base_models: List[torch.nn.Module]
     ):
-        if meta_model is None: #TODO unsure of this
-            model_preds = self._get_default_model_index()
+        if meta_model is None:
+            index = self._get_default_model_index()
+        elif meta_model == 'threshold':
+            index = self._get_threshold_model_index()
 
         device = next(base_models[0].parameters()).device
         with torch.no_grad():
             base_preds = []
-            if meta_model is not None:
-                model_preds = []
+            model_preds = []
 
             for batch in data_loader:
                 batch.to(device)
@@ -143,10 +144,14 @@ class ParallelExecutionState:
                 base_preds.append(base_pred)
                 batch.base_model_preds = base_pred
 
-                if meta_model is not None:
+                if meta_model is not None and meta_model != 'threshold':
                     model_pred = torch.argmax(meta_model(batch), dim=1).int()
                     model_preds.append(model_pred)
-        return torch.cat(base_preds), torch.cat(model_preds)
+            
+            if meta_model is not None and meta_model != 'threshold':
+                index = torch.cat(model_preds)
+
+        return torch.cat(base_preds), index
 
     @staticmethod
     def _select_predictions_by_index(

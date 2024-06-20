@@ -311,12 +311,18 @@ def load(name: str, device: str) -> object:
     return model, args
 
 
-def gen_train_input(train_config: dict, args: dict, seed: int, base_models: Optional[list] = None):
+def gen_train_input(
+    regimes: list[tuple],
+    train_config: dict,
+    args: dict,
+    seed: int,
+    base_models: Optional[list] = None
+):
     rng = np.random.default_rng(seed)
     train_instances = [
         instance
         for config in train_config['configs']
-        for (m, n) in train_config['regimes']
+        for (m, n) in regimes
         for instance in sample_instances(
             m,
             n,
@@ -330,7 +336,7 @@ def gen_train_input(train_config: dict, args: dict, seed: int, base_models: Opti
     val_instances = [
         instance
         for config in train_config['configs']
-        for (m, n) in train_config['regimes']
+        for (m, n) in regimes
         for instance in sample_instances(
             m,
             n,
