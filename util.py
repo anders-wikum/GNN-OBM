@@ -415,11 +415,11 @@ def graph_config_to_string(config):
         return f"OSMNX_{config['location']}"
 
 def save_meta_experiment(graph_str, data):
-    with open(f"experiments/meta_{graph_str}.pickle", 'wb') as handle:
+    with open(f"experiment_output/meta_{graph_str}.pickle", 'wb') as handle:
             pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 def upload_meta_experiment(graph_str, data):
-    filepath = f"experiments/meta_{graph_str}.pickle"
+    filepath = f"experiment_output/meta_{graph_str}.pickle"
     try:
         with open(filepath, 'rb') as handle:
             current_data = pickle.load(handle)
@@ -443,7 +443,7 @@ def load_meta_experiments(configs):
     data = {}
     for config in configs:
         config_str = graph_config_to_string(config)
-        with open(f"experiments/meta_{config_str}.pickle", 'rb') as handle:
+        with open(f"experiment_output/meta_{config_str}.pickle", 'rb') as handle:
             data[config_str] = pickle.load(handle)
     return data
 
