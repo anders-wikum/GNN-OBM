@@ -287,12 +287,12 @@ class ParallelExecutionState:
                 for instance in self.instances
             ]
             solve_start = time.perf_counter()
-            #lp_outputs = parallel_solve(inputs)
+            lp_outputs = parallel_solve(inputs)
             solve_end = time.perf_counter()
             solve_time = solve_end - solve_start
         else:
             solve_time = 0
-            #lp_outputs = [None] * self.num_instances
+            lp_outputs = [None] * self.num_instances
 
         times = {"lp_solve": solve_time}
         for baseline in baselines: 
