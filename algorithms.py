@@ -223,8 +223,10 @@ def _lp_match(input, verbose: Optional[bool] = False) -> _Array:
     online_nodes = range(m)
     offline_nodes = range(n)
     indices = list(it.product(offline_nodes, online_nodes))
-
-    model = gp.Model('LP-MATCH', env=gp.Env())
+    
+    env = gp.Env()
+    env.setParam('OutputFlag', 0)
+    model = gp.Model('LP-MATCH', env=env)
     x = _build_variables(model, indices)
     _build_constraints(model, x, noisy_p, online_nodes, offline_nodes, indices)
     _build_objective(model, x, noisy_A, indices)

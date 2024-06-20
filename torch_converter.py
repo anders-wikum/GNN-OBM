@@ -292,7 +292,8 @@ def _instance_to_sample_path(
     # pyg graph for the meta model, the latter includes base model predictions as
     # a node feature
     pyg_graph = init_pyg(instance, rng)
-    pyg_graph.base_model_preds = _get_base_predictions(pyg_graph, base_models)
+    if base_models:
+        pyg_graph.base_model_preds = _get_base_predictions(pyg_graph, base_models)
 
     sample_path = []
     offline_nodes = frozenset(np.arange(n))
@@ -328,7 +329,8 @@ def _instance_to_sample_path(
                     t + 1,
                     offline_nodes
                 )
-                pyg_graph.base_model_preds = _get_base_predictions(pyg_graph, base_models)
+                if base_models:
+                    pyg_graph.base_model_preds = _get_base_predictions(pyg_graph, base_models)
 
     return sample_path
 

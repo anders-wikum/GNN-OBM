@@ -92,9 +92,7 @@ class ParallelExecutionState:
 
 
     def _get_default_model_index(self):
-        return np.zeros(
-            self.num_instances * self.num_realizations
-        ).astype(int)
+        return [torch.tensor([0]) for _ in range(self.num_instances * self.num_realizations)]
     
 
     def _get_threshold_model_index(self):
@@ -131,6 +129,8 @@ class ParallelExecutionState:
     ):
         if meta_model is None:
             index = self._get_default_model_index()
+        elif meta_model == 'threshold':
+            index = self._get_threshold_model_index()
         elif meta_model == 'threshold':
             index = self._get_threshold_model_index()
 
@@ -201,6 +201,7 @@ class ParallelExecutionState:
             meta_model=meta_model,
             base_models=base_models
         )
+        index = index.long()
         
         preds = self._select_predictions_by_index(
             base_preds,
@@ -303,9 +304,9 @@ class ParallelExecutionState:
             )
         
         for i, ex_state in enumerate(self.execution_states):
-            # kwargs["lp_rounding"]["x"] = lp_outputs[i]
-            # kwargs["naor_lp_rounding"]["x"] = lp_outputs[i]
-            # kwargs["pollner_lp_rounding"]["x"] = lp_outputs[i]
+            kwargs.get("lp_rounding", {})["x"] = lp_outputs[i]
+            kwargs.get("naor_lp_rounding", {})["x"] = lp_outputs[i]
+            kwargs.get("pollner_lp_rounding", {})["x"] = lp_outputs[i]
             
             for j, real_state in enumerate(ex_state.state_realizations):
                 _, OPT = offline_opt(ex_state.A, real_state.coin_flips)
@@ -391,14 +392,14 @@ def evaluate_model(
 
    
 
-    print(f"Generation time: {gen_end - gen_start}")
-    print(f"GNN time: {gnn_end - gnn_start}")
-    print(f"        Model assignment time: {assign_time}")
-    print(f"        State update time: {dict(total_times)}")
-    print(f"Baseline times: {times}")
+    # print(f"Generation time: {gen_end - gen_start}")
+    # print(f"GNN time: {gnn_end - gnn_start}")
+    # print(f"        Model assignment time: {assign_time}")
+    # print(f"        State update time: {dict(total_times)}")
+    # print(f"Baseline times: {times}")
 
     end = time.perf_counter()
-    print(f"Total time: {end - start}")
+    # print(f"Total time: {end - start}")
 
     return ratio_dict, {}
 

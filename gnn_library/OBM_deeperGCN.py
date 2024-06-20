@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GENConv, global_max_pool
-from util import _extract_batch, _vtg_greedy_choices
+from util import _extract_batch, _vtg_greedy_choices, _vtg_predictions
 from torch.nn import LayerNorm, Linear, ReLU
 from torch_geometric.nn import DeepGCNLayer
 
@@ -17,6 +17,7 @@ class DeeperGCN(torch.nn.Module):
         self.graph_feature_dim = args.graph_feature_dim
         self.dropout = args.dropout
         self.num_layers = args.num_layers
+        self.classify = args.head == 'classification'
         self.pool = args.head == 'meta'
         self.device = args.device
         self.head = args.head
@@ -103,15 +104,17 @@ class DeeperGCN(torch.nn.Module):
             
         x = torch.hstack((x, graph_features.T))
         
-     
-        if self.pool:
+        if self.classify:
+            x = x.view(num_graphs, num_nodes, -1)[:, -1, :].flatten()
+        elif self.pool:
             x = global_max_pool(x, batch_ids)
         
-        for i in range(self.head_num_layers):
-            x = self.regression_head[i](x)
-            x = F.relu(x)
-            x = F.dropout(x, self.dropout, self.training)
-        x = self.regression_head[-1](x)
+        if not self.classify: 
+            for i in range(self.head_num_layers):
+                x = self.regression_head[i](x)
+                x = F.relu(x)
+                x = F.dropout(x, self.dropout, self.training)
+            x = self.regression_head[-1](x)
         
         if self.pool:
             x = F.softmax(x, dim=1)

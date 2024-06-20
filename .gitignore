@@ -5,4 +5,5 @@
 **/*.pyc
 **/experiment_output/
 !data/g_mission
+**/temp_data/*
 #**/trained_models/
