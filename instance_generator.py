@@ -1,9 +1,8 @@
 import numpy as np
 
+from instance import Instance
 from numpy.random import Generator
-from typing import List, Tuple
-
-from params import SAMPLER_SPECS, GRAPH_TYPES, _Array, _Instance
+from params import SAMPLER_SPECS, GRAPH_TYPES, _Array
 from util import _random_subset, _load_gmission, _load_osmnx
 
 
@@ -34,10 +33,10 @@ def _sample_er_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
     weight_scaling = kwargs.get('weight_scaling', 1.0)
     p = kwargs.get('p', 0.5)
 
-    mat = rng.binomial(1, p, size=(m, n))
+    A = rng.binomial(1, p, size=(m, n))
     if weighted:
-        mat = _add_uniform_weights(mat, low, high, weight_scaling, rng)
-    return mat
+        A = _add_uniform_weights(A, low, high, weight_scaling, rng)
+    return A
 
 
 def _barabasi_albert_graph(
@@ -86,19 +85,15 @@ def _sample_geom_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
 
     red = rng.uniform(0, 1, (d, m))
     blue = rng.uniform(0, 1, (d, n))
-    dist = np.linalg.norm(blue[:, None, :] - red[:, :, None], axis=0)
-    
-    #dist[dist > threshold] = 0
-    dist = (np.max(dist) - dist) / np.max(dist)
-    threshold = np.quantile(dist.flatten(), 1-q)
-    dist[dist < threshold] = 0
+    A = np.linalg.norm(blue[:, None, :] - red[:, :, None], axis=0)
+    A = (np.max(A) - A) / np.max(A)
+    threshold = np.quantile(A.flatten(), 1-q)
+    A[A < threshold] = 0
 
     if not weighted:
-        return(dist > 0).astype(float)
-    
-    # dist[dist > 0] = dist[dist > 0] - np.min(dist[dist>0])
-    # dist /= np.max(dist)
-    return dist
+        return(A > 0).astype(float)
+
+    return A
 
 
 def _sample_complete_bipartite_graph(m: int, n: int, rng: Generator, **kwargs):
@@ -147,8 +142,8 @@ def _sample_osmnx_graph(m: int, n: int, rng: Generator, **kwargs) -> _Array:
 
   # Only keep matches that could happen in a short enough amount of time
     travel_times[travel_times >= threshold] = 0
-    matrix = (np.max(travel_times) - travel_times) / np.max(travel_times)
-    return matrix
+    A = (np.max(travel_times) - travel_times) / np.max(travel_times)
+    return A
 
 
 def _sample_bipartite_graph(
@@ -179,8 +174,6 @@ def _sample_bipartite_graph(
             f'{graph_type} graph type: {missing_names}'
         )
     
-    # batch_kwargs = _batch_kwargs(**kwargs)
-    
     return SAMPLER_ROUTER[graph_type](m, n, rng, **kwargs)
 
 
@@ -197,16 +190,12 @@ def _osmnx_batch_kwargs(**kwargs) -> dict:
     return kwargs
 
 
-def _indentity_batch_kwargs(**kwargs) -> dict:
-    return kwargs
-
-
-def _batch_kwargs(**kwargs):
+def _shared_kwargs(**kwargs):
     KWARGS_ROUTER = {
-        'ER': _indentity_batch_kwargs,
-        'BA': _indentity_batch_kwargs,
-        'GEOM': _indentity_batch_kwargs,
-        'COMP': _indentity_batch_kwargs,
+        'ER': lambda **kwargs: kwargs,
+        'BA': lambda **kwargs: kwargs,
+        'GEOM': lambda **kwargs: kwargs,
+        'COMP': lambda **kwargs: kwargs,
         'GM': _gmission_batch_kwargs,
         'OSMNX': _osmnx_batch_kwargs
     }
@@ -221,12 +210,12 @@ def _sample_bipartite_graphs(
     num: int,
     rng: Generator,
     **kwargs
-) -> List[_Array]:
+) -> list[_Array]:
     
-    batch_kwargs = _batch_kwargs(**kwargs)
+    shared_kwargs = _shared_kwargs(**kwargs)
 
     return [
-        _sample_bipartite_graph(m, n, rng, **batch_kwargs)
+        _sample_bipartite_graph(m, n, rng, **shared_kwargs)
         for _ in range(num)
     ]
 
@@ -239,37 +228,19 @@ def _sample_probs(
     
     return rng.uniform(0, 1, (m, num))
 
-def _add_noise_to_vector(array, rng, noise_std, clip = True):
-    # Adds random gaussian noise with std noise_std. If clamp is True
-    # the result gets clamped between 0 and 1 (used for probability distributions
-    # and weights since they are always bounded 
-    noisy_array = rng.normal(array, noise_std)
-    if clip:
-        noisy_array = np.clip(noisy_array, 0, 1)
-    return noisy_array
-
 
 def sample_instances(
     m: int,
     n: int,
     num: int,
     rng: Generator,
-    args,
     **kwargs
-) -> Tuple[List[_Instance], _Array]:
-    noise_std = args.get('noise', 0)
+) -> tuple[list[Instance], _Array]:
+    
     As = _sample_bipartite_graphs(m, n, num, rng, **kwargs)
-
-    def _add_noise_if_nonzero(A, rng, noise_std):
-        noisy_A = _add_noise_to_vector(A, rng, noise_std, clip=False)
-        noisy_A[A == 0] = 0
-        return noisy_A
-
-    noisy_As = [_add_noise_if_nonzero(A, rng, noise_std) for A in As]
     ps = _sample_probs(m, num, rng)
-    noisy_ps = _add_noise_to_vector(ps, rng, noise_std)
     instances = [
-        (As[i], ps[:, i], noisy_As[i], noisy_ps[:, i])
+        Instance(As[i], ps[:, i])
         for i in range(len(As))
     ]
     return instances

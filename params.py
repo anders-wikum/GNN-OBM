@@ -1,12 +1,10 @@
 import numpy as np
-from typing import Tuple, List
+import torch
 
+Array = np.ndarray
+Tensor = torch.Tensor
+Matching = list[tuple[int, int]]
 
-
-# An instance is: A, p, noisy A, noisy p
-_Array = np.ndarray
-_Instance = Tuple[_Array, _Array, _Array, _Array]
-_Matching = List[Tuple[int, int]]
 
 # ============== Graph sampler params ===================== #
 

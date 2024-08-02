@@ -3,50 +3,55 @@ import numpy as np
 from copy import deepcopy
 from numpy.random import Generator
 from torch_geometric.data import Data
-from typing import List, Tuple, Optional
+from typing import Optional
 
 from algorithms import one_step_stochastic_opt, cache_stochastic_opt
-from params import _Array, _Instance
+from params import Array, Tensor
 from util import diff, _neighbors
+from instance import Instance
 
 
-def _gen_mask(size: tuple, slice: object) -> torch.Tensor:
+def _mask(size: tuple, slice: object) -> Tensor:
     mask = torch.zeros(size)
     mask[slice] = 1
     return torch.tensor(mask)
 
 
-def _positional_encoder(size: int, rng: Generator) -> torch.Tensor:
+def _positional_encoder(size: int, rng: Generator) -> Tensor:
     return torch.tensor(rng.uniform(0, 1, size))
 
 
-def _arrival_encoder(p: _Array, t: int, size: int) -> torch.Tensor:
-    p = np.copy(p)
+def _arrival_encoder(instance: Instance, t: int, size: int) -> Tensor:
+    p = np.copy(instance.p)
     p[t] = 1
     p[:t] = 1
     fill_size = size - len(p) - 1
     return torch.tensor([*([0] * fill_size), *p, 0])
 
 
-def _neighbor_encoder(A, offline_nodes, t) -> torch.Tensor:
-    m, n = A.shape
+def _neighbor_encoder(instance, offline_nodes, t) -> Tensor:
+    m = instance.m
+    n = instance.n
+    A = instance.A
     N_t = _neighbors(A, offline_nodes, t)
     return torch.tensor([*[u in N_t for u in np.arange(n + m)], True])
 
 
 def _gen_node_features(
-    m: int,
-    n: int,
-    p: _Array,
+    instance: Instance,
     t: int,
     rng: Generator
 ) -> torch.Tensor:
     
+    m = instance.m
+    n = instance.n
+    p = instance.p
+
     pos_encoder = _positional_encoder(n + m + 1, rng)
-    offline_mask = _gen_mask(n + m + 1, slice(0, n, 1))
+    offline_mask = _mask(n + m + 1, slice(0, n, 1))
     arrival_probs = _arrival_encoder(p, t, n + m + 1)
-    arrival_mask = _gen_mask(n + m + 1, n + t)
-    skip_node_encoder = _gen_mask(n + m + 1, n + m)
+    arrival_mask = _mask(n + m + 1, n + t)
+    skip_node_encoder = _mask(n + m + 1, n + m)
 
     return torch.stack(
         [
@@ -59,45 +64,37 @@ def _gen_node_features(
     ).T.type(torch.FloatTensor)
 
 
+def _gen_edge_features(instance: Instance) -> tuple[Tensor, Tensor]:
+    A = instance.A
+    m = instance.m
+    n = instance.n
 
-def _gen_edge_features(
-    A: _Array,
-    noisy_A: _Array
-) -> Tuple[torch.tensor, torch.tensor]:
-    
-    # A is used to decide if an edge is added, A_values is used
-    # to add the values to edge_attr. This is useful to use noisy
-    # weight values 
-    m, n = A.shape
     edge_index = []; edge_attr = []
 
     # Add edges/edge weights in underlying graph
     for i in range(m):
         for j in range(n):
             if A[i, j] > 0:
-                edge_index.append([j, n + i])
-                edge_index.append([n + i, j])
-                edge_attr.append([noisy_A[i, j]])
-                edge_attr.append([noisy_A[i, j]])
+                edge_index.extend([[j, n + i], [n + i, j]])
+                edge_attr.extend([[A[i, j]], [A[i, j]]])
     
     # Add edges to virtual node representing no match
     for i in range(0, m):
-        edge_index.append([n + m, n + i])
-        edge_index.append([n + i, n + m])
-        edge_attr.append([0])
-        edge_attr.append([0])
+        edge_index.extend([[n + m, n + i], [n + i, n + m]])
+        edge_attr.extend([[0], [0]])
 
     edge_index = torch.tensor(edge_index).T
     edge_attr = torch.tensor(edge_attr).type(torch.FloatTensor)
     return edge_index, edge_attr
 
+
 def _gen_graph_features(
-    m: int,
-    n: int,
+    instance: Instance,
     offline_nodes: frozenset,
     t: int
 ) -> torch.Tensor:
     
+    m = instance.m
     ratio = torch.Tensor([(m - t) / len(offline_nodes)])
     t = torch.Tensor([t])
 
@@ -110,23 +107,18 @@ def _gen_graph_features(
     
 
 def init_pyg(
-    instance: _Instance,
+    instance: Instance,
     rng: Generator
 ) -> Data:
     '''
     Initializes a PyG data object representing the problem instance (A, p, noisy_A, noisy_p).
     '''
-    A, _, noisy_A, noisy_p = instance
-    m, n = A.shape
 
-    offline_nodes = frozenset(np.arange(n))
-    t = 0
-
-    x = _gen_node_features(m, n, noisy_p, t, rng)
-    edge_index, edge_attr = _gen_edge_features(A, noisy_A)
-
-    neighbors = _neighbor_encoder(A, offline_nodes, t)
-    graph_features = _gen_graph_features(m, n, offline_nodes, t)
+    all_nodes = frozenset(np.arange(instance.n))
+    x = _gen_node_features(instance, t=0, rng=rng)
+    edge_index, edge_attr = _gen_edge_features(instance)
+    neighbors = _neighbor_encoder(instance, offline_nodes=all_nodes, t=0)
+    graph_features = _gen_graph_features(instance, offline_nodes=all_nodes, t=0)
 
     return Data(
         x=x,
@@ -134,21 +126,20 @@ def init_pyg(
         edge_attr=edge_attr,
         graph_features=graph_features,
         neighbors=neighbors,
-        m=torch.tensor([m]),
-        n=torch.tensor([n])
+        m=torch.tensor([instance.m]),
+        n=torch.tensor([instance.n])
     )
 
 
-def update_pyg(
+def update_pyg_with_choice(
     data: Data,
-    instance: _Instance,
+    instance: Instance,
     choice: int,
     t: int,
     offline_nodes: frozenset
 ) -> None:
     
-    A, _, _, _ = instance
-    m, n = A.shape
+    m, n = instance.m, instance.n
 
     def _filter_choice_edges(edge_index, edge_attr):
         mask = ((edge_index != choice) & (edge_index != n + t - 1)).all(dim=0)
@@ -171,7 +162,7 @@ def update_pyg(
         data.edge_attr = edge_attr
 
     def _update_neighbors():
-        data.neighbors = _neighbor_encoder(A, offline_nodes, t)
+        data.neighbors = _neighbor_encoder(instance.A, offline_nodes, t)
     
     def _update_graph_features():
         num_offline = len(offline_nodes)
@@ -191,38 +182,32 @@ def update_pyg(
 
 
 
-def label_pyg(data: Data, y: _Array) -> Data:
+def label_pyg(data: Data, y: Array) -> Data:
     data.hint = torch.FloatTensor(y)
     return deepcopy(data)
 
 
 def _marginal_vtg(
-    instance: _Instance,
+    instance: Instance,
     offline_nodes: frozenset, 
     t: int,
     cache: dict,
     **kwargs
-) -> _Array:
-    A, _, _, _ = instance
-    hint = one_step_stochastic_opt(
-        A, offline_nodes, t, cache
-    )
-
+) -> Array:
+    
+    hint = one_step_stochastic_opt(instance.A, offline_nodes, t, cache)
     return hint - hint[-1]
 
 
 def _meta_ratios(
-    instance: _Instance,
+    instance: Instance,
     offline_nodes: frozenset,
     t: int,
     cache: dict, 
     **kwargs
-) -> _Array:
+) -> Array:
     
-    A, _, _, _ = instance
-    hint = one_step_stochastic_opt(
-        A, offline_nodes, t, cache
-    )
+    hint = one_step_stochastic_opt(instance.A, offline_nodes, t, cache)
     models = kwargs['models']
     data = kwargs['data']
 
@@ -263,7 +248,7 @@ TARGET_FUNCS = {
 
 def _get_base_predictions(
     batch: Data,
-    base_models: List[torch.nn.Module]
+    base_models: list[torch.nn.Module]
 ):
     device = next(base_models[0].parameters()).device
     batch.to(device)
@@ -278,20 +263,17 @@ def _get_base_predictions(
         return base_pred
 
 def _instance_to_sample_path(
-    instance: _Instance,
+    instance: Instance,
     target_fn: callable,
     cache: dict,
     rng: Generator,
-    base_models: List[object] | None
-) -> List[Data]:
-    A, _, _, _ = instance
-    m, n = A.shape
-
-    # Initialize data at start of sample path
-    # There is a disctinction between the pyg graph for the base models and the
-    # pyg graph for the meta model, the latter includes base model predictions as
-    # a node feature
+    base_models: list[object] | None
+) -> list[Data]:
+    
+    m = instance.m
+    n = instance.n
     pyg_graph = init_pyg(instance, rng)
+
     if base_models:
         pyg_graph.base_model_preds = _get_base_predictions(pyg_graph, base_models)
 
@@ -322,7 +304,7 @@ def _instance_to_sample_path(
 
             if t < m - 1 and len(offline_nodes) > 0:
                 # Update the pyg graph for the base models
-                update_pyg(
+                update_pyg_with_choice(
                     pyg_graph,
                     instance,
                     choice,
@@ -336,10 +318,10 @@ def _instance_to_sample_path(
 
         
 def _instances_to_train_samples(
-    instances: List[_Instance],
+    instances: list[Instance],
     head: str,
-    base_models: Optional[List[object]] = None,
-) -> List[Data]:
+    base_models: Optional[list[object]] = None,
+) -> list[Data]:
     
     samples = []
     rng = np.random.default_rng()

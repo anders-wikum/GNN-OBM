@@ -8,19 +8,20 @@ from numpy.random import Generator
 from scipy.optimize import linear_sum_assignment
 from typing import Optional, Tuple
 
-from params import _Array, _Instance, _Matching
+from params import _Array, _Matching
+from instance import Instance
 from util import powerset, diff, _neighbors
 
 
 
-def cache_stochastic_opt(A: _Array, p: _Array) -> dict:
+def cache_stochastic_opt(instance: Instance) -> dict:
     '''
     Computes the value-to-go for all timesteps t=1...m and for
     all subsets S of offline nodes {1, ..., n}, according to
     online arrival probabilities [p] and underlying graph
     adjacency matrix [A].
     '''
-
+    A, p = instance.A, instance.p
     def _neighbor_max_argmax(S: frozenset, t: int):
         argmax = -1
         max_val = cache[t + 1][S][0]
@@ -69,7 +70,7 @@ def cache_stochastic_opt(A: _Array, p: _Array) -> dict:
 
 
 def one_step_stochastic_opt(
-    A: _Array,
+    instance: Instance,
     offline_nodes: frozenset,
     t: int,
     cache: dict
@@ -78,10 +79,10 @@ def one_step_stochastic_opt(
     associated with each offline node matching to online node [t]. Nodes which
     are not active in [offline_nodes] have a value-to-go of 0.'''
 
-    N_t = _neighbors(A, offline_nodes, t)
+    N_t = _neighbors(instance.A, offline_nodes, t)
     hint = np.array([
         *[
-            cache[t + 1][diff(offline_nodes, u)][0] + A[t, u]
+            cache[t + 1][diff(offline_nodes, u)][0] + instance.A[t, u]
             for u in N_t
         ],
         cache[t + 1][offline_nodes][0]
@@ -91,64 +92,59 @@ def one_step_stochastic_opt(
 
 
 def stochastic_opt(
-    A: _Array,
+    instance: Instance,
     coin_flips: _Array,
     cache: dict
 ) -> Tuple[_Matching, float]:
     
-    m, n = A.shape
-    offline_nodes = frozenset(np.arange(n))
+    offline_nodes = frozenset(np.arange(instance.n))
     matching = []
     value = 0
 
-    for t in range(m):
+    for t in range(instance.m):
         if coin_flips[t]:
             choice = cache[t][offline_nodes][1]
             if choice in offline_nodes:
                 matching.append((t, choice))
                 offline_nodes = diff(offline_nodes, choice)
-                value += A[t, choice]
+                value += instance.A[t, choice]
 
     return matching, value
 
     
 def greedy(
-    instance: _Instance,
+    instance: Instance,
     coin_flips: _Array
 ) -> Tuple[_Matching, float]:
     
     return threshold_greedy(instance, coin_flips, 0)
 
 def threshold_greedy(
-    instance: _Instance,
+    instance: Instance,
     coin_flips: _Array,
     threshold: float
 ) -> Tuple[_Matching, float]:
-    A, _, noisy_A, _ = instance
-    m, n = A.shape
+    A = np.copy(instance.A)
 
-    offline_nodes = frozenset(np.arange(n))
+    offline_nodes = frozenset(np.arange(instance.n))
     matching = []
     value = 0
 
-    noisy_A = np.copy(noisy_A)
-
-    for t in range(m):
+    for t in range(instance.m):
         if coin_flips[t]:
-            choice = np.argmax(noisy_A[t, :])
-            if choice in offline_nodes and noisy_A[t, choice] > threshold:
+            choice = np.argmax(A[t, :])
+            if choice in offline_nodes and A[t, choice] > threshold:
                 matching.append((t, choice))
                 offline_nodes = diff(offline_nodes, choice)
                 value += A[t, choice]
-                noisy_A[:, choice] = 0
+                A[:, choice] = 0
 
     return matching, value
 
 
-def offline_opt(A: _Array, coin_flips: _Array) -> Tuple[_Matching, float]:
-    A = np.copy(A)
-    m = A.shape[0]
-    for t in range(m):
+def offline_opt(instance: Instance, coin_flips: _Array) -> Tuple[_Matching, float]:
+    A = np.copy(instance.A)
+    for t in range(instance.m):
         if not coin_flips[t]:
             A[t, :] = 0
 
@@ -216,26 +212,24 @@ def _build_objective(
     )
 
 
-def _lp_match(input, verbose: Optional[bool] = False) -> _Array:
+def _lp_match(instance: Instance, verbose: Optional[bool] = False) -> _Array:
 
-    noisy_A, noisy_p = input
-    m, n = noisy_A.shape
-    online_nodes = range(m)
-    offline_nodes = range(n)
+    online_nodes = range(instance.m)
+    offline_nodes = range(instance.n)
     indices = list(it.product(offline_nodes, online_nodes))
     
     env = gp.Env()
     env.setParam('OutputFlag', 0)
     model = gp.Model('LP-MATCH', env=env)
     x = _build_variables(model, indices)
-    _build_constraints(model, x, noisy_p, online_nodes, offline_nodes, indices)
-    _build_objective(model, x, noisy_A, indices)
+    _build_constraints(model, x, instance.p, online_nodes, offline_nodes, indices)
+    _build_objective(model, x, instance.A, indices)
    
     if not verbose:
         model.Params.LogToConsole = 0
     model.optimize()
 
-    output = np.array([x[(i, t)].x for (i, t) in indices]).reshape(n, m).T
+    output = np.array([x[(i, t)].x for (i, t) in indices]).reshape(instance.n, instance.m).T
     return output
 
 
@@ -359,30 +353,29 @@ def pivotal_sampling(r: _Array, rng: Generator) -> _Array:
 
 def _lp_approx(
     x: _Array,
-    instance: _Instance,
+    instance: Instance,
     coin_flips: _Array,
     proposal_prob_fn: callable,
     candidate_fn: callable,
     rng: Generator
 ) -> Tuple[_Matching, float]:
     
-    A, _, noisy_A, noisy_p = instance
-    m, n = x.shape
+    A = instance.A
 
     matching = []
     val = 0
-    avail_mask = np.array(n * [True])
+    avail_mask = np.array(instance.n * [True])
 
-    proposal_probs = proposal_prob_fn(x, noisy_p)
+    proposal_probs = proposal_prob_fn(x, instance.p)
     candidates = candidate_fn(proposal_probs, rng)
 
-    for t in range(m):
+    for t in range(instance.m):
         if coin_flips[t]:
             proposals = candidates[t, :]
             valid_proposals = np.bitwise_and(avail_mask, proposals)
 
             if not np.all(valid_proposals == 0):
-                matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
+                matched_node = np.argmax(np.multiply(A[t], valid_proposals))
                 matching.append((t, matched_node))
                 val += A[t, matched_node]
                 avail_mask[matched_node] = 0
@@ -391,17 +384,15 @@ def _lp_approx(
 
 def pollner_lp_approx(
     x: _Array,
-    instance: _Instance,
+    instance: Instance,
     coin_flips: _Array,
     rng: Generator
 ) -> Tuple[_Matching, float]:
     
-    A, _, noisy_A, noisy_p = instance
-    m, n = x.shape
-
+    A = instance.A
     matching = []
     val = 0
-    avail_mask = np.array(n * [True])
+    avail_mask = np.array(instance.n * [True])
     
     def _proposal_prob_fn(x, p):
         eps = 0.11
@@ -412,12 +403,12 @@ def pollner_lp_approx(
         x_hat = x
         return _compute_proposal_probs(x_hat, p)
     
-    proposal_probs = _proposal_prob_fn(x, noisy_p)
-    for t in range(m):
+    proposal_probs = _proposal_prob_fn(x, instance.p)
+    for t in range(instance.m):
         
         if coin_flips[t]:
-            index = np.argsort(noisy_A[t, :])[::-1]
-            reverse_index = np.nonzero(index == np.arange(n)[:, None])[1]
+            index = np.argsort(A[t, :])[::-1]
+            reverse_index = np.nonzero(index == np.arange(instance.n)[:, None])[1]
 
             probs = proposal_probs[t, :]
 
@@ -430,7 +421,7 @@ def pollner_lp_approx(
             valid_proposals = np.bitwise_and(avail_mask, ordered_proposals)
 
             if not np.all(valid_proposals == 0):
-                matched_node = np.argmax(np.multiply(noisy_A[t], valid_proposals))
+                matched_node = np.argmax(np.multiply(A[t], valid_proposals))
                 matching.append((t, matched_node))
                 val += A[t, matched_node]
                 avail_mask[matched_node] = 0
@@ -439,7 +430,7 @@ def pollner_lp_approx(
 
 def braverman_lp_approx(
     x: _Array,
-    instance: _Instance,
+    instance: Instance,
     coin_flips: _Array,
     rng: Generator
 ) -> Tuple[_Matching, float]:
@@ -462,7 +453,7 @@ def braverman_lp_approx(
 
 def naor_lp_approx(
     x: _Array,
-    instance: _Instance,
+    instance: Instance,
     coin_flips: _Array,
     rng: Generator
 ) -> Tuple[_Matching, float]:

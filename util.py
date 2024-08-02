@@ -16,6 +16,8 @@ from torch_geometric.data import InMemoryDataset
 from params import _Array
 
 
+Tensor = torch.Tensor
+
 matplotlib.rcParams['mathtext.fontset'] = 'stix'
 matplotlib.rcParams['font.family'] = 'STIXGeneral'
 plt.rcParams['text.usetex'] = False
@@ -113,6 +115,11 @@ def _load_gmission():
 
     return edge_df
 
+def representative_gather(input: Tensor, dim: int, index: Tensor) -> Tensor:
+    indices = index.unsqueeze(1).unsqueeze(2)
+    indices = torch.repeat_interleave(indices, input.size(1), dim=1)
+    return input.gather(dim=dim, index=indices).squeeze().T
+    return input[torch.arange(input.size(0)), :, index]
 
 def _extract_batch(batch):
     try:
@@ -125,7 +132,8 @@ def _extract_batch(batch):
         batch.edge_attr,
         batch.batch, 
         num_graphs,
-        batch.graph_features
+        batch.t
+        #batch.graph_features
     )
 
 
