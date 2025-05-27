@@ -3,7 +3,7 @@ import numpy as np
 from copy import deepcopy
 from numpy.random import Generator
 from torch_geometric.data import Data
-from typing import List, Tuple, Optional
+from typing import Optional
 
 from algorithms import one_step_stochastic_opt, cache_stochastic_opt
 from params import _Array, _Instance
@@ -63,7 +63,7 @@ def _gen_node_features(
 def _gen_edge_features(
     A: _Array,
     noisy_A: _Array
-) -> Tuple[torch.tensor, torch.tensor]:
+) -> tuple[torch.tensor, torch.tensor]:
     
     # A is used to decide if an edge is added, A_values is used
     # to add the values to edge_attr. This is useful to use noisy
@@ -263,7 +263,7 @@ TARGET_FUNCS = {
 
 def _get_base_predictions(
     batch: Data,
-    base_models: List[torch.nn.Module]
+    base_models: list[torch.nn.Module]
 ):
     device = next(base_models[0].parameters()).device
     batch.to(device)
@@ -282,8 +282,8 @@ def _instance_to_sample_path(
     target_fn: callable,
     cache: dict,
     rng: Generator,
-    base_models: List[object] | None
-) -> List[Data]:
+    base_models: list[object] | None
+) -> list[Data]:
     A, _, _, _ = instance
     m, n = A.shape
 
@@ -336,10 +336,10 @@ def _instance_to_sample_path(
 
         
 def _instances_to_train_samples(
-    instances: List[_Instance],
+    instances: list[_Instance],
     head: str,
-    base_models: Optional[List[object]] = None,
-) -> List[Data]:
+    base_models: Optional[list[object]] = None,
+) -> list[Data]:
     
     samples = []
     rng = np.random.default_rng()

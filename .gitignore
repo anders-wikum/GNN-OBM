@@ -6,4 +6,5 @@
 **/experiment_output/
 !data/g_mission
 **/temp_data/*
+*.pickle
 #**/trained_models/

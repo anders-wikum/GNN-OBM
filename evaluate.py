@@ -6,7 +6,7 @@ from collections import defaultdict
 from numpy.random import Generator
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Batch
-from typing import Optional, List, Tuple
+from typing import Optional
 
 from algorithms import greedy, threshold_greedy, braverman_lp_approx, \
     naor_lp_approx, pollner_lp_approx, offline_opt, parallel_solve
@@ -77,7 +77,7 @@ class ExecutionState:
 class ParallelExecutionState:
     def __init__(
         self,
-        instances: List[_Instance],
+        instances: list[_Instance],
         num_realizations: int,
         rng: Generator
     ):
@@ -107,7 +107,7 @@ class ParallelExecutionState:
     def _get_base_predictions(
         self,
         batch: Batch,
-        base_models: List[torch.nn.Module]
+        base_models: list[torch.nn.Module]
     ):
         
         with torch.no_grad():
@@ -125,7 +125,7 @@ class ParallelExecutionState:
         self, 
         data_loader: DataLoader,
         meta_model: torch.nn.Module,
-        base_models: List[torch.nn.Module]
+        base_models: list[torch.nn.Module]
     ):
         if meta_model is None:
             index = self._get_default_model_index()
@@ -170,7 +170,7 @@ class ParallelExecutionState:
         return base_preds[torch.arange(base_preds.size(0)), index]
     
 
-    def _build_loader(self, batch_size: int) -> Tuple[DataLoader, int]:
+    def _build_loader(self, batch_size: int) -> tuple[DataLoader, int]:
 
         data = Dataset([
             realized_state.dataset
@@ -190,7 +190,7 @@ class ParallelExecutionState:
     def compute_choices(
         self,
         meta_model: torch.nn.Module,
-        base_models: List[torch.nn.Module],
+        base_models: list[torch.nn.Module],
         batch_size: int
     ):
 
@@ -201,7 +201,7 @@ class ParallelExecutionState:
             meta_model=meta_model,
             base_models=base_models
         )
-        index = index.long()
+        index = torch.tensor(index).long()
         
         preds = self._select_predictions_by_index(
             base_preds,
@@ -223,7 +223,7 @@ class ParallelExecutionState:
 
         return choices
             
-    def _get_update_info(self, t: int) -> Tuple[list, list, list]:
+    def _get_update_info(self, t: int) -> tuple[list, list, list]:
         states = []
         coin_flips = []
         instances = []
@@ -238,13 +238,13 @@ class ParallelExecutionState:
     def update(
         self,
         t: int,
-        choices: List[torch.Tensor] 
+        choices: list[torch.Tensor] 
     ):
         times = defaultdict(lambda: 0)
 
         start = time.perf_counter()
         info_acq = time.perf_counter()
-        states , coin_flips, instances = self._get_update_info(t)
+        states, coin_flips, instances = self._get_update_info(t)
 
         info_acq_end = time.perf_counter()
         times['init'] += info_acq_end - info_acq
@@ -271,7 +271,7 @@ class ParallelExecutionState:
 
     def compute_competitive_ratios(
         self,
-        baselines: List[str],
+        baselines: list[str],
         baselines_only: bool,
         **kwargs
     ):
@@ -340,12 +340,12 @@ class ParallelExecutionState:
 
 def evaluate_model(
     meta_model: object,
-    base_models: List[torch.nn.Module],
-    instances: List[_Instance],
+    base_models: list[torch.nn.Module],
+    instances: list[_Instance],
     batch_size: int,
     rng: Generator,
     num_realizations: Optional[int] = 1,
-    baselines: Optional[List[str]] = [],
+    baselines: Optional[list[str]] = [],
     **kwargs
 ) -> tuple:
     
