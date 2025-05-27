@@ -1,7 +1,6 @@
 import numpy as np
 
 from numpy.random import Generator
-from typing import List, Tuple
 
 from params import SAMPLER_SPECS, GRAPH_TYPES, _Array, _Instance
 from util import _random_subset, _load_gmission, _load_osmnx
@@ -221,7 +220,7 @@ def _sample_bipartite_graphs(
     num: int,
     rng: Generator,
     **kwargs
-) -> List[_Array]:
+) -> list[_Array]:
     
     batch_kwargs = _batch_kwargs(**kwargs)
 
@@ -256,7 +255,7 @@ def sample_instances(
     rng: Generator,
     args,
     **kwargs
-) -> Tuple[List[_Instance], _Array]:
+) -> tuple[list[_Instance], _Array]:
     noise_std = args.get('noise', 0)
     As = _sample_bipartite_graphs(m, n, num, rng, **kwargs)
 

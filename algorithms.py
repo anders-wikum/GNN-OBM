@@ -6,7 +6,7 @@ import numpy as np
 from copy import copy
 from numpy.random import Generator
 from scipy.optimize import linear_sum_assignment
-from typing import Optional, Tuple
+from typing import Optional
 
 from params import _Array, _Instance, _Matching
 from util import powerset, diff, _neighbors
@@ -94,7 +94,7 @@ def stochastic_opt(
     A: _Array,
     coin_flips: _Array,
     cache: dict
-) -> Tuple[_Matching, float]:
+) -> tuple[_Matching, float]:
     
     m, n = A.shape
     offline_nodes = frozenset(np.arange(n))
@@ -115,7 +115,7 @@ def stochastic_opt(
 def greedy(
     instance: _Instance,
     coin_flips: _Array
-) -> Tuple[_Matching, float]:
+) -> tuple[_Matching, float]:
     
     return threshold_greedy(instance, coin_flips, 0)
 
@@ -123,7 +123,7 @@ def threshold_greedy(
     instance: _Instance,
     coin_flips: _Array,
     threshold: float
-) -> Tuple[_Matching, float]:
+) -> tuple[_Matching, float]:
     A, _, noisy_A, _ = instance
     m, n = A.shape
 
@@ -145,7 +145,7 @@ def threshold_greedy(
     return matching, value
 
 
-def offline_opt(A: _Array, coin_flips: _Array) -> Tuple[_Matching, float]:
+def offline_opt(A: _Array, coin_flips: _Array) -> tuple[_Matching, float]:
     A = np.copy(A)
     m = A.shape[0]
     for t in range(m):
@@ -325,7 +325,7 @@ def _pollner_scaling(x, s, eps, delta):
     a = np.minimum(np.maximum(theta - s, 0), x)
     return (1 - eps) * a + (1 + delta) * (x - a)
 
-def pivot(r1: float, r2: float, p: float) -> Tuple[float, float]:
+def pivot(r1: float, r2: float, p: float) -> tuple[float, float]:
     sum = r1 + r2
     overflow = int(sum >= 1)
     if r1 + r2 - 2 * overflow == 0:
@@ -364,7 +364,7 @@ def _lp_approx(
     proposal_prob_fn: callable,
     candidate_fn: callable,
     rng: Generator
-) -> Tuple[_Matching, float]:
+) -> tuple[_Matching, float]:
     
     A, _, noisy_A, noisy_p = instance
     m, n = x.shape
@@ -394,7 +394,7 @@ def pollner_lp_approx(
     instance: _Instance,
     coin_flips: _Array,
     rng: Generator
-) -> Tuple[_Matching, float]:
+) -> tuple[_Matching, float]:
     
     A, _, noisy_A, noisy_p = instance
     m, n = x.shape
@@ -442,7 +442,7 @@ def braverman_lp_approx(
     instance: _Instance,
     coin_flips: _Array,
     rng: Generator
-) -> Tuple[_Matching, float]:
+) -> tuple[_Matching, float]:
     
     def _candidate_fn(proposal_probs, rng):
         return rng.binomial(1, proposal_probs)
@@ -465,7 +465,7 @@ def naor_lp_approx(
     instance: _Instance,
     coin_flips: _Array,
     rng: Generator
-) -> Tuple[_Matching, float]:
+) -> tuple[_Matching, float]:
 
     def _proposal_prob_fn(x, p):
         eps = 0.0480

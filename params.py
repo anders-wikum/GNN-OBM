@@ -1,12 +1,9 @@
 import numpy as np
-from typing import Tuple, List
-
-
 
 # An instance is: A, p, noisy A, noisy p
 _Array = np.ndarray
-_Instance = Tuple[_Array, _Array, _Array, _Array]
-_Matching = List[Tuple[int, int]]
+_Instance = tuple[_Array, _Array, _Array, _Array]
+_Matching = list[tuple[int, int]]
 
 # ============== Graph sampler params ===================== #
 
